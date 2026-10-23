@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image-Tag (Standard: Version aus dem Manifest)
+        required: false
+        type: string
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image-Referenz bestimmen
+        id: ref
+        run: |
+          manifest_tag="$(node -p "require('./gladys-assistant-integration.json').docker_image.split(':').pop()")"
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME#v}"; fi
+          if [ -z "$tag" ]; then tag="$manifest_tag"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Baue ghcr.io/${{ github.repository }}:$tag"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ steps.ref.outputs.tag }}
