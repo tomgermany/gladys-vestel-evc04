@@ -10,10 +10,13 @@
 // The card does not show "Ladezustand: 2". It says what is happening: "Ich lade
 // aktuell mit 11 kW." That sentence is the first thing on the card.
 //
-// WHY A STATUS ROW AND NOT A VALUE TILE FOR THE STATE
-// Gladys has no enum feature for "available" or "charging", so the state is a
-// text feature. A status row carries a label, an icon and a value without a
-// second component, which is what a sentence needs.
+// WHY THE CONTROL IS SHOWN AT ALL
+// Setting a charging current puts the wallbox under this integration's control:
+// from that moment the failsafe value no longer applies, and the heartbeat in
+// src/alive.js keeps the value alive. A card that did not say so would leave the
+// user guessing which of the two states is in force — "charges at 6 A because
+// the car asked for it" and "charges at 6 A because nothing controls it any
+// more" look identical on the device page.
 //
 // THE BUDGET — why the order below is a decision
 // A card takes at most 8 components, and among them at most 4 BUTTONS, 6 value
@@ -38,11 +41,22 @@ export const CHARGER_WIDGET = 'charger';
 export const ACTION = {
   CURRENT_DOWN: 'current_down',
   CURRENT_UP: 'current_up',
-  RELEASE: 'release',
 };
 
 /** How many amperes one tap of the current buttons moves. */
 export const CURRENT_STEP = 1;
+
+/**
+ * The label of the current tile, which names the number rather than the concept.
+ *
+ * "Ladestrom 16 A" answers the question a bar without a number leaves open: is
+ * this the value I set, or something the device chose? With no value under our
+ * control the label stays plain, because then there is no number to name.
+ */
+export function currentLabel(t, current) {
+  if (current === null || current === undefined) return t('current');
+  return `${t('current')} ${current} A`;
+}
 
 /**
  * @param {object} ctx
@@ -50,7 +64,7 @@ export const CURRENT_STEP = 1;
  * @param {object|null} ctx.device { name, serial, model, host }
  * @param {object} ctx.ids { power, session_energy, meter_reading, charging_current }
  * @param {object} ctx.settings the widget instance settings
- * @param {boolean} ctx.controlled true while a charging current is set
+ * @param {number|null} ctx.controlled the charging current under our control, or null
  * @param {Function} ctx.t labels, per language
  * @param {Function} ctx.sentence state as one sentence, per language
  */
@@ -59,7 +73,7 @@ export function buildChargerContent({
   device,
   ids = {},
   settings = {},
-  controlled = false,
+  controlled = null,
   t = (key) => key,
   sentence = () => '',
 }) {
@@ -85,7 +99,8 @@ export function buildChargerContent({
     ],
   });
 
-  // 2. The live power, as a tile bound to its own feature.
+  // 2. The live power, as a tile bound to its own feature. It follows the
+  //    published states, so nothing has to be refreshed here.
   if (ids.power) {
     components.push({
       type: 'value',
@@ -122,9 +137,31 @@ export function buildChargerContent({
     });
   }
 
-  // 5. The control. Two buttons while a current is under our control, otherwise
-  //    a single button that takes control at the failsafe value — the card must
-  //    never offer a button whose effect the user cannot see.
+  // 5. WHICH CURRENT IS IN FORCE, and the user has to be able to tell.
+  //
+  //    Two states that look alike and are not:
+  //      - a value under our control: the heartbeat is running and the wallbox
+  //        charges with exactly this current;
+  //      - no value under our control: the wallbox uses its own failsafe value,
+  //        which this integration does not read back from the device and
+  //        therefore does not guess at.
+  //
+  //    A register READING is not the same as a value WE SET: the register holds
+  //    whatever was written last, by anyone. So the tile is bound to the feature
+  //    our own writes publish, and its label names the number.
+  if (ids.charging_current) {
+    components.push({
+      type: 'value',
+      label: currentLabel(t, controlled),
+      icon: 'plug',
+      device_feature: ids.charging_current,
+      unit: 'A',
+      color: controlled === null ? 'neutral' : 'info',
+    });
+  }
+
+  // 6. The control: two buttons that move the charging current one ampere at a
+  //    time, inside what the cable and the EVSE allow.
   if (ids.charging_current) {
     components.push({
       type: 'button',
@@ -156,14 +193,14 @@ function stateColor(state) {
 /**
  * Work out what a tapped button means, without doing it.
  *
- * The widget returns an intention; the caller applies it, because the caller
- * owns the connection and the heartbeat. Keeping the two apart is what stops a
- * card from being able to write to a device on its own.
+ * The widget returns an intention; the caller applies it, because the caller owns
+ * the connection and the heartbeat. Keeping the two apart is what stops a card
+ * from being able to write to a device on its own.
  *
  * `step` moves the current from the value the user sees, not from a value
  * remembered somewhere else: two taps in a row then give two different currents.
  */
-export function chargerAction({ actionKey, params, state, controlled, t = (key) => key }) {
+export function chargerAction({ actionKey, params, state, t = (key) => key }) {
   switch (actionKey) {
     case ACTION.CURRENT_DOWN:
     case ACTION.CURRENT_UP: {
@@ -174,9 +211,6 @@ export function chargerAction({ actionKey, params, state, controlled, t = (key) 
       const next = Math.max(6, Math.round(base + delta));
       return { current: next, toast: t('control', next) };
     }
-    case ACTION.RELEASE:
-      if (!controlled) throw new Error('No charging current is under control');
-      return { release: true, toast: t('releasing') };
     default:
       throw new Error(`Unknown widget action: ${actionKey}`);
   }
