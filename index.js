@@ -1,0 +1,395 @@
+// -----------------------------------------------------------------------------
+// Entry point (the "wiring"): it connects the pieces, it holds no logic.
+//
+// WHAT THIS FILE DOES
+// It creates the SDK connection to Gladys, registers the handlers Gladys calls
+// (scan, poll, action, scenes, widget) and starts the container. Everything else
+// lives in src/:
+//   src/vestel/transport.js  the raw TCP socket
+//   src/vestel/modbus.js     the Modbus protocol
+//   src/vestel/registers.js  the register map of this device
+//   src/vestel/client.js     registers as named readings
+//   src/devices/wallbox.js   the wallbox as a Gladys device
+//   src/widgets.js           the dashboard card
+//   src/scenes.js            the triggers and the actions
+//   src/alive.js             the heartbeat for register 6000
+//   src/config.js            defaults and normalisation
+//
+// THE ONE ORDERING RULE
+// Every handler is registered BEFORE `gladys.connect()`. Gladys may send a
+// message the moment the connection opens, and a handler registered later would
+// simply miss it.
+//
+// ONE CONNECTION, AND THE HEARTBEAT RUNS ON IT
+// The EVC04 allows exactly ONE Modbus master at a time, so this process owns the
+// only connection and every read — poll, scan, connection test — runs on it. The
+// alive heartbeat writes through the same client, which is the point: a second
+// socket would be refused by the device, and a second socket that carried the
+// heartbeat would be the one that got refused at exactly the wrong moment.
+//
+// WHY THE HEARTBEAT STARTS WITH A CURRENT AND STOPS WHEN RELEASED
+// A beat that runs all the time would hold the wallbox under external control
+// even when nothing is being controlled, and the failsafe value would never
+// apply. See src/alive.js for what that costs.
+//
+// SDK: @gladysassistant/integration-sdk ^0.15 (Gladys >= 5.1.0).
+// -----------------------------------------------------------------------------
+
+import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
+
+import { normalizeConfig } from './src/config.js';
+import { Evc04Client } from './src/vestel/client.js';
+import { CONTROL } from './src/vestel/registers.js';
+import { buildDevice, decorate, deviceExternalId, platformId, publishAll, PLATFORM_TYPE } from './src/devices/wallbox.js';
+import { SCENE_ACTIONS, TRIGGER, chargingEvents } from './src/scenes.js';
+import { CHARGER_WIDGET, buildChargerContent, chargerAction } from './src/widgets.js';
+import { AliveControl } from './src/alive.js';
+import { stateSentence, t, KEY } from './src/labels.js';
+
+const gladys = new GladysIntegration();
+
+// --- State of the running integration ----------------------------------------
+let config = normalizeConfig(); // the user settings, re-read on every change
+let client = null; // the Modbus connection, null while we have none
+let snapshot = null; // the last readings
+let device = null; // { host, serial, model, name }
+let lastRead = 0; // when the readings were taken, to honour poll_frequency
+let lastCharging = null; // null until the first reading, see src/scenes.js
+let connecting = null; // the connect attempt running right now, or null
+
+// The heartbeat. It writes through `client`, which means it also works while a
+// scene is running: the wallbox sees one master answering, whoever asked for the
+// current.
+const control = new AliveControl({
+  write: (register, value) => client.writeRegister(register, value),
+  log: (message) => logger.warn(message),
+});
+
+const NO_HOST = {
+  de: 'Bitte die Adresse der Wallbox in der Konfiguration eintragen.',
+  en: 'Enter the wallbox address in the configuration.',
+  fr: "Indiquez l'adresse de la borne dans la configuration.",
+  es: 'Introduce la dirección del cargador en la configuración.',
+};
+
+/** Read the configuration Gladys holds into `config`. */
+async function readConfig() {
+  config = normalizeConfig(await gladys.getConfig());
+  control.configure({
+    failsafeCurrent: config.failsafe_current,
+    failsafeTimeout: config.failsafe_timeout,
+  });
+  return config;
+}
+
+/**
+ * Connect to the wallbox, once at a time.
+ *
+ * THE GATE, AND WHY IT IS HERE AND NOT IN `establish()`
+ * `connected` and `onConfigUpdated` both connect, and on a restart both fire
+ * within seconds of each other. A second caller must not start a competing
+ * connection — the device allows one master, so a second attempt would not fail
+ * cleanly, it would take the slot from the first. `finally` clears the gate
+ * rather than a plain assignment: a gate left set after a throw would make every
+ * later caller wait on a promise that has already settled, and the integration
+ * would never connect again.
+ */
+async function connectWallbox() {
+  if (connecting) return connecting;
+  connecting = establish();
+  try {
+    return await connecting;
+  } finally {
+    connecting = null;
+  }
+}
+
+/** Do the actual connect: hand the old connection back, open a new one, read once. */
+async function establish() {
+  if (client) {
+    await client.transport?.close?.().catch(() => {});
+    client = null;
+  }
+  snapshot = null;
+  device = null;
+  lastCharging = null;
+
+  if (!config.host) {
+    await gladys.setConnectionStatus(false, NO_HOST);
+    return false;
+  }
+
+  try {
+    const next = new Evc04Client({
+      host: config.host,
+      port: config.modbus_port,
+      unitId: config.unit_id,
+    });
+    next.warn = (what, err) => logger.warn(`Tolerated (${what}): ${err.message}`);
+    const info = await next.connect();
+
+    client = next;
+    device = {
+      host: config.host,
+      serial: info.serial,
+      model: info.model || info.brand || 'Wallbox',
+      name: info.chargepointId || info.serial || 'Wallbox',
+    };
+
+    snapshot = decorate(await client.readAll());
+    logger.info(
+      `Wallbox ready: ${device.model} (${device.serial}), firmware ${info.firmware}, ` +
+        `${Object.keys(snapshot).length} readings, state ${snapshot.chargepoint_state}`,
+    );
+    await gladys.setConnectionStatus(true);
+    return true;
+  } catch (err) {
+    // A failed attempt must not leave a half-open socket behind: the device
+    // allows one master, and a stranded socket would keep the next attempt from
+    // taking it.
+    client?.transport?.reset();
+    client = null;
+    logger.error(`Wallbox connection failed (${config.host}): ${err.message}`);
+    await gladys
+      .setConnectionStatus(false, {
+        de: `Wallbox nicht erreichbar: ${err.message}`.slice(0, 200),
+        en: `Wallbox not reachable: ${err.message}`.slice(0, 200),
+        fr: `Borne injoignable : ${err.message}`.slice(0, 200),
+        es: `Cargador no accesible: ${err.message}`.slice(0, 200),
+      })
+      .catch(() => {});
+    return false;
+  }
+}
+
+/**
+ * Publish the wallbox, so it appears in the Discovery tab where the user creates
+ * it. Publishing is an offer, not a creation: Gladys keeps the user in control.
+ */
+async function publishDevice() {
+  if (!device || !snapshot) return;
+  const payload = buildDevice(gladys, device, snapshot);
+  logger.info(
+    `publishDiscoveredDevices -> "${payload.name}" with ${payload.features.length} features`,
+  );
+  await gladys.publishDiscoveredDevices([payload]);
+  await publishAll(gladys, device, snapshot);
+}
+
+/** Read the wallbox again, publish every value, and check the charging flank. */
+async function refresh() {
+  if (!client) return;
+  snapshot = decorate(await client.readAll());
+  lastRead = Date.now();
+  await publishAll(gladys, device, snapshot);
+  await fireChargingEvents();
+  // A card that is showing a charge is worth redrawing when the charge changes.
+  if (changed) gladys.requestWidgetRefresh(CHARGER_WIDGET);
+}
+
+let changed = false;
+
+/**
+ * The two scene triggers: "started" and "finished".
+ *
+ * The comparison lives in src/scenes.js, next to the comment that explains why a
+ * trigger cannot carry a threshold. Here is only the part that needs the running
+ * process: remembering the last state, and publishing what came back.
+ */
+async function fireChargingEvents() {
+  const { events, side } = chargingEvents({ snapshot, previous: lastCharging });
+  changed = side !== lastCharging;
+  lastCharging = side;
+  for (const event of events) {
+    await gladys
+      .publishSceneEvent(event.key, event.data)
+      .catch((err) => logger.error(`publishSceneEvent ${event.key} failed`, err.message));
+  }
+}
+
+// --- Discovery ---------------------------------------------------------------
+gladys.onScanRequest(async () => {
+  logger.info('onScanRequest -> called by Gladys');
+  if (!client && !(await connectWallbox())) {
+    logger.warn('onScanRequest -> no wallbox, nothing published');
+    return;
+  }
+  await publishDevice();
+});
+
+// --- Polling -----------------------------------------------------------------
+// Gladys ticks a polled device once a minute at most; the interval the user
+// chose is applied by skipping ticks, so a 60-second setting simply ignores
+// every other tick.
+gladys.onPoll(async (polled) => {
+  if (!client || !device) return;
+  if (polled.external_id !== deviceExternalId(gladys, device)) return;
+  if (Date.now() - lastRead < config.poll_frequency - 15000) return;
+  await refresh().catch((err) => logger.warn(`Poll failed: ${err.message}`));
+});
+
+/**
+ * Manifest action "Test the connection".
+ *
+ * It answers in words, and it names the one thing that cannot be guessed: the
+ * address base. If the serial number comes back as noise, the register map of
+ * this device is being read with the wrong interpretation, and the user should
+ * hear that here rather than wonder why every value looks wrong.
+ */
+gladys.onAction('test_connection', async () => {
+  await readConfig().catch(() => {});
+  if (!client && !(await connectWallbox())) {
+    return {
+      de: `Keine Antwort von ${config.host}. Ist Modbus TCP in der Wallbox eingeschaltet?`,
+      en: `No answer from ${config.host}. Is Modbus TCP switched on in the wallbox?`,
+      fr: `Aucune réponse de ${config.host}. Le Modbus TCP est-il activé dans la borne ?`,
+      es: `Sin respuesta de ${config.host}. ¿Está activado Modbus TCP en el cargador?`,
+    };
+  }
+  try {
+    const info = await client.connect();
+    const readings = decorate(await client.readAll());
+    snapshot = readings;
+    const looksLikeText = /^[\x20-\x7e]*$/.test(info.serial ?? '');
+    return {
+      de:
+        `Antwort: ${info.brand ?? '?'} ${info.model ?? '?'}, Seriennummer ${info.serial ?? '?'}, ` +
+        `Firmware ${info.firmware ?? '?'}. Zustand ${readings.chargepoint_state ?? '?'}, ` +
+        `${Object.keys(readings).length} Werte.` +
+        (looksLikeText ? '' : ' Die Seriennummer ist kein lesbarer Text — vermutlich stimmt ADDRESS_BASE in src/vestel/registers.js nicht.'),
+      en:
+        `Answered: ${info.brand ?? '?'} ${info.model ?? '?'}, serial ${info.serial ?? '?'}, ` +
+        `firmware ${info.firmware ?? '?'}. State ${readings.chargepoint_state ?? '?'}, ` +
+        `${Object.keys(readings).length} readings.` +
+        (looksLikeText ? '' : ' The serial number is not readable text — ADDRESS_BASE in src/vestel/registers.js is probably wrong.'),
+      fr:
+        `Réponse : ${info.brand ?? '?'} ${info.model ?? '?'}, série ${info.serial ?? '?'}, ` +
+        `firmware ${info.firmware ?? '?'}. État ${readings.chargepoint_state ?? '?'}, ` +
+        `${Object.keys(readings).length} valeurs.` +
+        (looksLikeText ? '' : ' Le numéro de série n’est pas du texte lisible — ADDRESS_BASE dans src/vestel/registers.js est probablement faux.'),
+      es:
+        `Respuesta: ${info.brand ?? '?'} ${info.model ?? '?'}, serie ${info.serial ?? '?'}, ` +
+        `firmware ${info.firmware ?? '?'}. Estado ${readings.chargepoint_state ?? '?'}, ` +
+        `${Object.keys(readings).length} valores.` +
+        (looksLikeText ? '' : ' El número de serie no es texto legible: probablemente ADDRESS_BASE en src/vestel/registers.js es incorrecto.'),
+    };
+  } catch (err) {
+    logger.error(`Connection test failed (${config.host}): ${err.message}`);
+    return {
+      de: `Keine brauchbare Antwort von ${config.host}: ${err.message}`,
+      en: `No usable answer from ${config.host}: ${err.message}`,
+      fr: `Aucune réponse exploitable de ${config.host} : ${err.message}`,
+      es: `Sin respuesta aprovechable de ${config.host}: ${err.message}`,
+    };
+  }
+});
+
+// --- Commands ----------------------------------------------------------------
+// The user moved a control on the device page. Do the work on the wallbox, then
+// confirm the value back so the interface shows what really happened. Throwing
+// fails the command visibly, which is what a refused write should do.
+gladys.onSetValue(async (device_, feature, value) => {
+  if (!client) throw new Error('Wallbox nicht verbunden');
+  const ids = gladys.externalIds(PLATFORM_TYPE, platformId(device));
+  if (feature.external_id !== ids.feature(KEY.CHARGING_CURRENT)) {
+    throw new Error(`Nicht schreibbar: ${feature.external_id}`);
+  }
+  const current = Math.round(Number(value));
+  if (!Number.isFinite(current)) throw new Error('Ladestrom muss eine Zahl sein');
+  await client.writeRegister(CONTROL.charging_current, current);
+  control.set(current);
+  await gladys.publishState(feature.external_id, current);
+  gladys.requestWidgetRefresh(CHARGER_WIDGET);
+  return current;
+});
+
+// --- Scene actions -----------------------------------------------------------
+for (const [key, handler] of Object.entries(SCENE_ACTIONS)) {
+  gladys.onSceneAction(key, (fields) => handler({ client, fields, control }));
+}
+
+// --- Dashboard widget --------------------------------------------------------
+gladys.onWidgetGet(CHARGER_WIDGET, async ({ settings }) => {
+  // Read the wallbox first, so the card shows the truth, but keep the last known
+  // state if that read fails: a stale sentence beats an empty card.
+  if (client) snapshot = decorate(await client.readAll().catch(() => snapshot));
+  const ids = device ? gladys.externalIds(PLATFORM_TYPE, platformId(device)) : null;
+  return buildChargerContent({
+    state: snapshot,
+    device,
+    ids: {
+      power: ids?.feature(KEY.POWER) ?? null,
+      session_energy: ids?.feature('session_energy') ?? null,
+      meter_reading: ids?.feature(KEY.METER_READING) ?? null,
+      charging_current: ids?.feature(KEY.CHARGING_CURRENT) ?? null,
+    },
+    settings,
+    controlled: control.active,
+    t,
+    sentence: (state) => stateSentence(state, 'de', { power: state.power, charging: state.chargepoint_state === 'charging' }),
+  });
+});
+
+gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params, { settings }) => {
+  const intent = chargerAction({
+    actionKey,
+    params,
+    state: snapshot,
+    controlled: control.active,
+    t,
+  });
+  // The card decides what a tap means; this is where it happens.
+  if (intent.release) {
+    await SCENE_ACTIONS.release_charging_current({ client, control });
+  } else {
+    await SCENE_ACTIONS.set_charging_current({
+      client,
+      fields: { current: intent.current },
+      control,
+    });
+  }
+  gladys.requestWidgetRefresh(CHARGER_WIDGET);
+  return intent.toast;
+});
+
+// --- Configuration -----------------------------------------------------------
+gladys.onConfigUpdated(async (newConfig) => {
+  config = normalizeConfig(newConfig);
+  control.configure({
+    failsafeCurrent: config.failsafe_current,
+    failsafeTimeout: config.failsafe_timeout,
+  });
+  lastCharging = null;
+  if (await connectWallbox()) await publishDevice();
+  gladys.requestWidgetRefresh(CHARGER_WIDGET);
+});
+
+// --- Connection lifecycle ----------------------------------------------------
+gladys.on('connected', async () => {
+  try {
+    await readConfig();
+    if (await connectWallbox()) await publishDevice();
+    gladys.requestWidgetRefresh(CHARGER_WIDGET);
+  } catch (err) {
+    logger.error('Post-connection initialization failed', err.message);
+  }
+});
+
+// --- Shutdown ----------------------------------------------------------------
+// The container is stopped on every restart and update. The heartbeat stops
+// FIRST: a beat that outlives the shutdown would keep the wallbox under external
+// control while nothing is there to release it, and the failsafe value could
+// never take over.
+gladys.handleShutdown(async (signal) => {
+  logger.info(`Received ${signal} -> graceful shutdown`);
+  control.stop();
+  await client?.transport?.close?.().catch(() => {});
+  client = null;
+});
+
+// --- Startup -----------------------------------------------------------------
+logger.info('Starting the Vestel EVC04 integration...');
+gladys.connect().catch((err) => {
+  logger.error('Initial connection failed', err.message);
+  process.exit(1);
+});
