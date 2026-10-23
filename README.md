@@ -1,6 +1,6 @@
 # Vestel EVC04 Wallbox
 
-Eine externe [Gladys Assistant](https://gladysassistant.com/)-Integration f\u00fcr die Ladestation
+ Eine externe [Gladys Assistant](https://gladysassistant.com/)-Integration f\u00fcr die Ladestation
 **Vestel EVC04 Home** \u00fcber Modbus TCP/IP. Rein lokal: kein Cloud, kein OCPP-Backend, kein Konto.
 
 ## Warum Modbus und nicht OCPP
