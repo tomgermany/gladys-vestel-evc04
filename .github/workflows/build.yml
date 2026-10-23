@@ -1,3 +1,32 @@
+   name: Build
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image-Tag (Standard: Version aus dem Manifest)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Image-Referenz bestimmen
         id: ref
         run: |
@@ -10,3 +39,10 @@
           if [ -z "$tag" ]; then tag="$manifest_tag"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Baue ghcr.io/${{ github.repository }}:$tag"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          tags: ghcr.io/${{ github.repository }}:${{ steps.ref.outputs.tag }}
