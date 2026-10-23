@@ -1,22 +1,5 @@
 name: Release
 
-# Die eine Taste, die eine Version veröffentlicht — und was sie in welcher
-# Reihenfolge tut:
-#
-#   1. die Version in package.json UND im Manifest anheben, samt Image-Tag;
-#   2. die `## [Unreleased]`-Sektion der CHANGELOG.md unter die neue Version schieben;
-#   3. Version und Changelog committen, den Tag `vX.Y.Z` erzeugen und pushen.
-#
-# WAS HIER NICHT MEHR STEHT, UND WARUM
-# Ein Job, der `build.yml` über `uses:` aufruft, ist entfernt. Er war der Grund,
-# warum dieser Workflow aus der Liste der Workflows fiel: ein aufgerufener Workflow
-# muss als wiederverwendbar registriert sein, und ein Fehler darin lässt den
-# AUFRUFER verschwinden — mit einem roten Lauf ohne Fehlertext.
-#
-# Das Image entsteht jetzt über den Tag-Push: build.yml hat `push: tags: ['v*.*.*']`
-# als Auslöser, und der Tag, den dieser Workflow setzt, startet ihn. Ein Mechanismus
-# statt zweier, und keine Rechteübergabe an einen zweiten Workflow.
-
 on:
   workflow_dispatch:
     inputs:
@@ -38,7 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Die volle Historie, damit die Tags da sind und der Push sie ergänzen kann.
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -62,11 +44,11 @@ jobs:
           git push
           git push --tags
 
-      - name: Tag der Build-Workflow übergeben
-        run: |
-          echo "Der Tag v${{ steps.release.outputs.version }} wurde gepusht." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Ist der Build-Workflow darauf angelaufen, entsteht jetzt" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`ghcr.io/tomgermany/gladys-vestel-evc04:${{ steps.release.outputs.version }}\`." >> "$GITHUB_STEP_SUMMARY"
-          echo "Läuft er nicht an, ist im Tag-Push nichts passiert — das ist die eine" >> "$GITHUB_STEP_SUMMARY"
-          echo "Stelle, an der ein Workflow einen Tag-Push des Bots ignorieren kann." >> "$GITHUB_STEP_SUMMARY"
+  build:
+    needs: release
+    uses: ./.github/workflows/build.yml
+    with:
+      tag: ${{ needs.release.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
