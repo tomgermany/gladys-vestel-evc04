@@ -62,6 +62,17 @@ export const CURRENT_STEP = 1;
 export const MIN_CURRENT = 6;
 
 /**
+ * Is a setpoint under our control?
+ *
+ * `null` means "no value", and so does `false` — the two arrive from different
+ * callers and mean the same thing. Anything else, including 0, is a value that was
+ * set and has to be shown as such.
+ */
+export function hasControl(controlled) {
+  return controlled !== null && controlled !== undefined && controlled !== false;
+}
+
+/**
  * The label of the current tile, which names the number rather than the concept.
  *
  * "Ladestrom 16 A" answers the question a bar without a number leaves open: is
@@ -69,7 +80,7 @@ export const MIN_CURRENT = 6;
  * control the label stays plain, because then there is no number to name.
  */
 export function currentLabel(t, current) {
-  if (current === null || current === undefined) return t('current');
+  if (!hasControl(current)) return t('current');
   return `${t('current')} ${current} A`;
 }
 
@@ -78,7 +89,7 @@ export function currentLabel(t, current) {
  * @param {object|null} ctx.state the last reading snapshot
  * @param {object|null} ctx.device { name, serial, model, host }
  * @param {object} ctx.ids { power, session_energy, meter_reading, charging_current }
- * @param {number|null} ctx.controlled the charging current under our control, or null
+ * @param {number|false|null} ctx.controlled the charging current under our control
  * @param {Function} ctx.t labels, per language
  * @param {Function} ctx.sentence state as one sentence, per language
  */
@@ -168,7 +179,7 @@ export function buildChargerContent({
       icon: 'plug',
       device_feature: ids.charging_current,
       unit: 'A',
-      color: controlled === null ? 'neutral' : 'info',
+      color: hasControl(controlled) ? 'info' : 'neutral',
     });
   }
 
@@ -191,7 +202,7 @@ export function buildChargerContent({
     });
 
     // 7. The release button, only while a setpoint is under control.
-    if (controlled !== null) {
+    if (hasControl(controlled)) {
       components.push({
         type: 'button',
         label: t('release'),
@@ -222,10 +233,21 @@ function stateColor(state) {
  *
  * `step` moves the current from the value the user sees, not from a value
  * remembered somewhere else: two taps in a row then give two different currents.
- * `limits` are the figures the device reported, so a tap can never leave the range
- * the wallbox accepts.
+ *
+ * THE CEILING IS OPTIONAL, AND THAT IS DELIBERATE
+ * When the caller passes the limits it read from the device, a tap can never leave
+ * the range the wallbox accepts. When it does not, the floor still applies and the
+ * ceiling is left open — an invented ceiling of 6 A would turn every tap into "set
+ * 6 A", which is the failure this signature exists to avoid.
  */
-export function chargerAction({ actionKey, params, state, controlled = null, limits, t = (key) => key }) {
+export function chargerAction({
+  actionKey,
+  params,
+  state,
+  controlled = null,
+  limits,
+  t = (key) => key,
+}) {
   switch (actionKey) {
     case ACTION.CURRENT_DOWN:
     case ACTION.CURRENT_UP: {
@@ -234,12 +256,13 @@ export function chargerAction({ actionKey, params, state, controlled = null, lim
       const known = Number(state?.charging_current);
       const base = Number.isFinite(known) && known > 0 ? known : MIN_CURRENT;
       const min = Math.max(MIN_CURRENT, Number(limits?.min) || MIN_CURRENT);
-      const max = Math.max(min, Number(limits?.max) || MIN_CURRENT);
+      const ceiling = Number(limits?.max);
+      const max = Number.isFinite(ceiling) ? Math.max(min, ceiling) : Infinity;
       const next = Math.min(max, Math.max(min, Math.round(base + delta)));
       return { current: next, toast: t('control', next) };
     }
     case ACTION.RELEASE: {
-      if (controlled === null || controlled === undefined) {
+      if (!hasControl(controlled)) {
         throw new Error('No charging current is under control');
       }
       return { release: true, toast: t('releasing') };
