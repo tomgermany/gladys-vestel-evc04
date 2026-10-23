@@ -1,0 +1,183 @@
+// -----------------------------------------------------------------------------
+// The dashboard widget "Wallbox".
+//
+// WHAT A WIDGET IS HERE
+// A small card on the dashboard. This file builds its CONTENT; the Gladys core
+// renders it. No HTML, no CSS, no script: the content is a declarative tree of
+// components in a small vocabulary, and the core normalises and translates it.
+//
+// THE ONE SENTENCE, WHICH IS THE WHOLE POINT
+// The card does not show "Ladezustand: 2". It says what is happening: "Ich lade
+// aktuell mit 11 kW." That sentence is the first thing on the card.
+//
+// WHY A STATUS ROW AND NOT A VALUE TILE FOR THE STATE
+// Gladys has no enum feature for "available" or "charging", so the state is a
+// text feature. A status row carries a label, an icon and a value without a
+// second component, which is what a sentence needs.
+//
+// THE BUDGET — why the order below is a decision
+// A card takes at most 8 components, and among them at most 4 BUTTONS, 6 value
+// tiles, 2 texts and 1 status list. Anything past a cap is DROPPED, in content
+// order, silently. So the sentence comes first, then the values a user actually
+// looks at, then the buttons. A fifth button would simply never appear.
+//
+// THE TILES ARE BOUND TO FEATURES, NOT TO NUMBERS
+// A tile with `device_feature` carries the external id of a published feature,
+// and Gladys reads that feature's own value and history. It therefore stays
+// right by itself and needs nothing from here.
+// -----------------------------------------------------------------------------
+
+/** Widget key, as declared in the manifest `widgets` field. */
+export const CHARGER_WIDGET = 'charger';
+
+/**
+ * Action keys carried by the buttons. They are part of the widget contract: a
+ * dashboard stores the content the integration sends, so renaming one leaves an
+ * existing button doing nothing.
+ */
+export const ACTION = {
+  CURRENT_DOWN: 'current_down',
+  CURRENT_UP: 'current_up',
+  RELEASE: 'release',
+};
+
+/** How many amperes one tap of the current buttons moves. */
+export const CURRENT_STEP = 1;
+
+/**
+ * @param {object} ctx
+ * @param {object|null} ctx.state the last reading snapshot
+ * @param {object|null} ctx.device { name, serial, model, host }
+ * @param {object} ctx.ids { power, session_energy, meter_reading, charging_current }
+ * @param {object} ctx.settings the widget instance settings
+ * @param {boolean} ctx.controlled true while a charging current is set
+ * @param {Function} ctx.t labels, per language
+ * @param {Function} ctx.sentence state as one sentence, per language
+ */
+export function buildChargerContent({
+  state,
+  device,
+  ids = {},
+  settings = {},
+  controlled = false,
+  t = (key) => key,
+  sentence = () => '',
+}) {
+  if (!state || !device) {
+    return {
+      ttl_seconds: 30,
+      components: [{ type: 'text', body: t('notConnected') }],
+    };
+  }
+
+  const components = [];
+
+  // 1. THE SENTENCE. One status row, and the first thing a reader sees.
+  components.push({
+    type: 'status',
+    items: [
+      {
+        label: t('power'),
+        icon: state.chargepoint_state === 'charging' ? 'zap' : 'battery-charging',
+        value: sentence(state),
+        color: stateColor(state),
+      },
+    ],
+  });
+
+  // 2. The live power, as a tile bound to its own feature.
+  if (ids.power) {
+    components.push({
+      type: 'value',
+      label: t('power'),
+      icon: 'zap',
+      device_feature: ids.power,
+      unit: 'kW',
+      color: state.chargepoint_state === 'charging' ? 'success' : 'neutral',
+    });
+  }
+
+  // 3. What this session has charged, so the card answers the question the user
+  //    actually has: how much went into the car.
+  if (ids.session_energy) {
+    components.push({
+      type: 'value',
+      label: t('energy'),
+      icon: 'battery',
+      device_feature: ids.session_energy,
+      unit: 'kWh',
+      color: 'neutral',
+    });
+  }
+
+  // 4. The meter reading, which is the lifetime figure.
+  if (ids.meter_reading) {
+    components.push({
+      type: 'value',
+      label: t('meter'),
+      icon: 'activity',
+      device_feature: ids.meter_reading,
+      unit: 'kWh',
+      color: 'neutral',
+    });
+  }
+
+  // 5. The control. Two buttons while a current is under our control, otherwise
+  //    a single button that takes control at the failsafe value — the card must
+  //    never offer a button whose effect the user cannot see.
+  if (ids.charging_current) {
+    components.push({
+      type: 'button',
+      label: '− 1 A',
+      icon: 'minus',
+      style: 'secondary',
+      action: { key: ACTION.CURRENT_DOWN, params: { step: CURRENT_STEP } },
+    });
+    components.push({
+      type: 'button',
+      label: '+ 1 A',
+      icon: 'plus',
+      style: 'secondary',
+      action: { key: ACTION.CURRENT_UP, params: { step: CURRENT_STEP } },
+    });
+  }
+
+  return { ttl_seconds: 60, components };
+}
+
+/** The colour of the state row: a fault is not a neutral event. */
+function stateColor(state) {
+  if (state.chargepoint_state === 'faulted') return 'danger';
+  if (state.chargepoint_state === 'charging') return 'success';
+  if (state.chargepoint_state === 'unavailable') return 'warning';
+  return 'neutral';
+}
+
+/**
+ * Work out what a tapped button means, without doing it.
+ *
+ * The widget returns an intention; the caller applies it, because the caller
+ * owns the connection and the heartbeat. Keeping the two apart is what stops a
+ * card from being able to write to a device on its own.
+ *
+ * `step` moves the current from the value the user sees, not from a value
+ * remembered somewhere else: two taps in a row then give two different currents.
+ */
+export function chargerAction({ actionKey, params, state, controlled, t = (key) => key }) {
+  switch (actionKey) {
+    case ACTION.CURRENT_DOWN:
+    case ACTION.CURRENT_UP: {
+      const step = Number(params?.step ?? CURRENT_STEP);
+      const delta = actionKey === ACTION.CURRENT_UP ? step : -step;
+      const known = Number(state?.charging_current);
+      const base = Number.isFinite(known) && known > 0 ? known : Number(state?.evse_min_current) || 6;
+      const next = Math.max(6, Math.round(base + delta));
+      return { current: next, toast: t('control', next) };
+    }
+    case ACTION.RELEASE:
+      if (!controlled) throw new Error('No charging current is under control');
+      return { release: true, toast: t('releasing') };
+    default:
+      throw new Error(`Unknown widget action: ${actionKey}`);
+  }
+}
