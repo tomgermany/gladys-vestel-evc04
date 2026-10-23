@@ -1,16 +1,5 @@
 name: Build
 
-# Ein mehrarchitektonisches Image, ohne bewegliches `latest`.
-#
-# ZWEI WEGE HINEIN, UND WARUM ES NICHT DREI SIND
-#   workflow_call      von release.yml aufgerufen, mit dem Tag, den es gerade setzt
-#   workflow_dispatch  ein manueller Lauf, mit wahlweisem Tag — zum Testen
-#
-# `push: tags` stand hier einmal und ist ABSICHTLICH entfernt. Ein Tag, der aus
-# einem GITHUB_TOKEN heraus gepusht wird, löst Workflows nicht zuverlässig aus: der
-# Release-Lauf war grün, es gab ein Release, und dieser Workflow hat nie begonnen.
-# Ein Aufruf ist ein Aufruf — auf den kann man sich verlassen.
-
 on:
   workflow_dispatch:
     inputs:
