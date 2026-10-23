@@ -8,11 +8,15 @@
     "fr": "Pilote et surveille la borne Vestel EVC04 en Modbus TCP.",
     "es": "Controla y supervisa el cargador Vestel EVC04 por Modbus TCP."
   },
-  "version": "0.1.0",
-  "docker_image": "ghcr.io/tomgermany/gladys-vestel-evc04:0.1.0",
+  "version": "0.1.1",
+  "docker_image": "ghcr.io/tomgermany/gladys-vestel-evc04:0.1.1",
   "gladys_version": ">=5.1.0",
-  "categories": ["energy"],
-  "transports": ["local"],
+  "categories": [
+    "energy"
+  ],
+  "transports": [
+    "local"
+  ],
   "config_schema": [
     {
       "key": "host",
@@ -36,7 +40,12 @@
       "type": "number",
       "required": false,
       "default": 502,
-      "label": { "de": "Modbus-Port", "en": "Modbus port", "fr": "Port Modbus", "es": "Puerto Modbus" },
+      "label": {
+        "de": "Modbus-Port",
+        "en": "Modbus port",
+        "fr": "Port Modbus",
+        "es": "Puerto Modbus"
+      },
       "description": {
         "de": "Standard 502. Nur ändern, wenn der Port in der Wallbox umgestellt wurde.",
         "en": "Default 502. Only change it if the port was changed on the wallbox.",
@@ -49,7 +58,12 @@
       "type": "number",
       "required": false,
       "default": 255,
-      "label": { "de": "Modbus Unit ID", "en": "Modbus unit id", "fr": "Unit ID Modbus", "es": "Unit ID Modbus" },
+      "label": {
+        "de": "Modbus Unit ID",
+        "en": "Modbus unit id",
+        "fr": "Unit ID Modbus",
+        "es": "Unit ID Modbus"
+      },
       "description": {
         "de": "Die EVC04 antwortet auf Unit ID 255. Nur ändern, wenn dein Gerät anders konfiguriert ist.",
         "en": "The EVC04 answers on unit id 255. Only change it if your device is configured differently.",
@@ -78,7 +92,12 @@
     {
       "key": "control_intro",
       "type": "section",
-      "label": { "de": "Steuerung", "en": "Control", "fr": "Commande", "es": "Control" },
+      "label": {
+        "de": "Steuerung",
+        "en": "Control",
+        "fr": "Commande",
+        "es": "Control"
+      },
       "description": {
         "de": "Der Ladestrom wird in Register 5004 gesetzt, begrenzt auf das, was die Wallbox selbst erlaubt. Solange ein Sollwert gilt, hält die Integration den Alive-Register (6000). Die Grenzen selbst werden nur gelesen, niemals gesetzt: was du in der Wallbox einträgst, gilt.",
         "en": "The charging current is set in register 5004, clamped to what the wallbox itself allows. While a setpoint holds, the integration keeps the alive register (6000) answered. The limits themselves are read, never written: what you enter on the wallbox is what applies.",
@@ -126,7 +145,12 @@
   "actions": [
     {
       "key": "test_connection",
-      "label": { "de": "Verbindung prüfen", "en": "Test the connection", "fr": "Tester la connexion", "es": "Comprobar la conexión" },
+      "label": {
+        "de": "Verbindung prüfen",
+        "en": "Test the connection",
+        "fr": "Tester la connexion",
+        "es": "Comprobar la conexión"
+      },
       "description": {
         "de": "Liest die Wallbox jetzt und sagt, was sie geantwortet hat: Seriennummer, Modell, Firmware, Zustand und der Ladestrom-Bereich, den das Gerät erlaubt.",
         "en": "Reads the wallbox now and reports what it answered: serial number, model, firmware, state and the charging current range the device allows.",
@@ -139,7 +163,12 @@
   "widgets": [
     {
       "key": "charger",
-      "label": { "de": "Wallbox", "en": "Wallbox", "fr": "Borne de recharge", "es": "Cargador" },
+      "label": {
+        "de": "Wallbox",
+        "en": "Wallbox",
+        "fr": "Borne de recharge",
+        "es": "Cargador"
+      },
       "description": {
         "de": "Ladezustand in Worten, die aktuelle Ladeleistung und der Ladestrom live.",
         "en": "Charging state in words, the current charging power and the charging current live.",
@@ -153,7 +182,12 @@
   "scene_triggers": [
     {
       "key": "charging_started",
-      "label": { "de": "Wallbox lädt", "en": "Wallbox charging", "fr": "La borne charge", "es": "El cargador carga" },
+      "label": {
+        "de": "Wallbox lädt",
+        "en": "Wallbox charging",
+        "fr": "La borne charge",
+        "es": "El cargador carga"
+      },
       "description": {
         "de": "Die Wallbox hat begonnen zu laden. Feuert einmal beim Übergang, nicht bei jedem Lesevorgang.",
         "en": "The wallbox started charging. Fires once on the transition, not on every read.",
@@ -161,14 +195,46 @@
         "es": "El cargador ha empezado a cargar. Se activa una vez en el cambio, no en cada lectura."
       },
       "variables": [
-        { "key": "power", "type": "number", "label": { "de": "Leistung in Watt", "en": "Power in watts", "fr": "Puissance en watts", "es": "Potencia en vatios" } },
-        { "key": "current", "type": "number", "label": { "de": "Ladestrom in A", "en": "Charging current in A", "fr": "Courant de charge en A", "es": "Corriente de carga en A" } },
-        { "key": "energy", "type": "number", "label": { "de": "Zählerstand in kWh", "en": "Meter reading in kWh", "fr": "Index en kWh", "es": "Lectura del contador en kWh" } }
+        {
+          "key": "power",
+          "type": "number",
+          "label": {
+            "de": "Leistung in Watt",
+            "en": "Power in watts",
+            "fr": "Puissance en watts",
+            "es": "Potencia en vatios"
+          }
+        },
+        {
+          "key": "current",
+          "type": "number",
+          "label": {
+            "de": "Ladestrom in A",
+            "en": "Charging current in A",
+            "fr": "Courant de charge en A",
+            "es": "Corriente de carga en A"
+          }
+        },
+        {
+          "key": "energy",
+          "type": "number",
+          "label": {
+            "de": "Zählerstand in kWh",
+            "en": "Meter reading in kWh",
+            "fr": "Index en kWh",
+            "es": "Lectura del contador en kWh"
+          }
+        }
       ]
     },
     {
       "key": "charging_finished",
-      "label": { "de": "Wallbox beendet", "en": "Wallbox finished", "fr": "La borne a terminé", "es": "El cargador ha terminado" },
+      "label": {
+        "de": "Wallbox beendet",
+        "en": "Wallbox finished",
+        "fr": "La borne a terminé",
+        "es": "El cargador ha terminado"
+      },
       "description": {
         "de": "Die Wallbox hat aufgehört zu laden. Feuert einmal beim Übergang, nicht bei jedem Lesevorgang.",
         "en": "The wallbox stopped charging. Fires once on the transition, not on every read.",
@@ -176,16 +242,48 @@
         "es": "El cargador ha dejado de cargar. Se activa una vez en el cambio, no en cada lectura."
       },
       "variables": [
-        { "key": "energy", "type": "number", "label": { "de": "Zählerstand in kWh", "en": "Meter reading in kWh", "fr": "Index en kWh", "es": "Lectura del contador en kWh" } },
-        { "key": "session_energy", "type": "number", "label": { "de": "Energie dieser Ladung in kWh", "en": "Energy of this session in kWh", "fr": "Énergie de cette charge en kWh", "es": "Energía de esta carga en kWh" } },
-        { "key": "duration", "type": "number", "label": { "de": "Dauer in Sekunden", "en": "Duration in seconds", "fr": "Durée en secondes", "es": "Duración en segundos" } }
+        {
+          "key": "energy",
+          "type": "number",
+          "label": {
+            "de": "Zählerstand in kWh",
+            "en": "Meter reading in kWh",
+            "fr": "Index en kWh",
+            "es": "Lectura del contador en kWh"
+          }
+        },
+        {
+          "key": "session_energy",
+          "type": "number",
+          "label": {
+            "de": "Energie dieser Ladung in kWh",
+            "en": "Energy of this session in kWh",
+            "fr": "Énergie de cette charge en kWh",
+            "es": "Energía de esta carga en kWh"
+          }
+        },
+        {
+          "key": "duration",
+          "type": "number",
+          "label": {
+            "de": "Dauer in Sekunden",
+            "en": "Duration in seconds",
+            "fr": "Durée en secondes",
+            "es": "Duración en segundos"
+          }
+        }
       ]
     }
   ],
   "scene_actions": [
     {
       "key": "set_charging_current",
-      "label": { "de": "Ladestrom setzen", "en": "Set the charging current", "fr": "Régler le courant de charge", "es": "Ajustar la corriente de carga" },
+      "label": {
+        "de": "Ladestrom setzen",
+        "en": "Set the charging current",
+        "fr": "Régler le courant de charge",
+        "es": "Ajustar la corriente de carga"
+      },
       "description": {
         "de": "Setzt den Ladestrom in Ampere, begrenzt auf das, was die Wallbox und das Kabel erlauben.",
         "en": "Sets the charging current in amperes, clamped to what the wallbox and the cable allow.",
@@ -194,15 +292,39 @@
       },
       "timeout_seconds": 30,
       "fields": [
-        { "key": "current", "type": "number", "required": true, "label": { "de": "Ladestrom in A", "en": "Charging current in A", "fr": "Courant de charge en A", "es": "Corriente de carga en A" } }
+        {
+          "key": "current",
+          "type": "number",
+          "required": true,
+          "label": {
+            "de": "Ladestrom in A",
+            "en": "Charging current in A",
+            "fr": "Courant de charge en A",
+            "es": "Corriente de carga en A"
+          }
+        }
       ],
       "outputs": [
-        { "key": "current", "type": "number", "label": { "de": "Gesetzter Strom in A", "en": "Current set in A", "fr": "Courant réglé en A", "es": "Corriente ajustada en A" } }
+        {
+          "key": "current",
+          "type": "number",
+          "label": {
+            "de": "Gesetzter Strom in A",
+            "en": "Current set in A",
+            "fr": "Courant réglé en A",
+            "es": "Corriente ajustada en A"
+          }
+        }
       ]
     },
     {
       "key": "release_charging_current",
-      "label": { "de": "Ladestrom freigeben", "en": "Release the charging current", "fr": "Libérer le courant de charge", "es": "Liberar la corriente de carga" },
+      "label": {
+        "de": "Ladestrom freigeben",
+        "en": "Release the charging current",
+        "fr": "Libérer le courant de charge",
+        "es": "Liberar la corriente de carga"
+      },
       "description": {
         "de": "Beendet die Steuerung. Der Herzschlag wird nicht mehr bedient, die Wallbox lädt wieder nach ihrer eigenen Einstellung.",
         "en": "Ends the control. The heartbeat stops being answered and the wallbox charges according to its own setting again.",
@@ -211,7 +333,16 @@
       },
       "timeout_seconds": 30,
       "outputs": [
-        { "key": "current", "type": "number", "label": { "de": "Freigegebener Strom in A", "en": "Released current in A", "fr": "Courant libéré en A", "es": "Corriente liberada en A" } }
+        {
+          "key": "current",
+          "type": "number",
+          "label": {
+            "de": "Freigegebener Strom in A",
+            "en": "Released current in A",
+            "fr": "Courant libéré en A",
+            "es": "Corriente liberada en A"
+          }
+        }
       ]
     }
   ]
