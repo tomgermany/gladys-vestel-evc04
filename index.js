@@ -40,8 +40,15 @@ import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
 import { CONTROL } from './src/vestel/registers.js';
-import { buildDevice, decorate, deviceExternalId, platformId, publishAll, PLATFORM_TYPE } from './src/devices/wallbox.js';
-import { SCENE_ACTIONS, TRIGGER, chargingEvents } from './src/scenes.js';
+import {
+  buildDevice,
+  decorate,
+  deviceExternalId,
+  platformId,
+  publishAll,
+  PLATFORM_TYPE,
+} from './src/devices/wallbox.js';
+import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { CHARGER_WIDGET, buildChargerContent, chargerAction } from './src/widgets.js';
 import { AliveControl } from './src/alive.js';
 import { stateSentence, t, KEY } from './src/labels.js';
@@ -56,6 +63,7 @@ let device = null; // { host, serial, model, name }
 let lastRead = 0; // when the readings were taken, to honour poll_frequency
 let lastCharging = null; // null until the first reading, see src/scenes.js
 let connecting = null; // the connect attempt running right now, or null
+let flank = false; // did the last read change the charging state?
 
 // The heartbeat. It writes through `client`, which means it also works while a
 // scene is running: the wallbox sees one master answering, whoever asked for the
@@ -113,6 +121,7 @@ async function establish() {
   snapshot = null;
   device = null;
   lastCharging = null;
+  flank = false;
 
   if (!config.host) {
     await gladys.setConnectionStatus(false, NO_HOST);
@@ -183,22 +192,23 @@ async function refresh() {
   lastRead = Date.now();
   await publishAll(gladys, device, snapshot);
   await fireChargingEvents();
-  // A card that is showing a charge is worth redrawing when the charge changes.
-  if (changed) gladys.requestWidgetRefresh(CHARGER_WIDGET);
+  // A card showing a charge is worth redrawing when the charge changes: the
+  // sentence on it says something else the moment energy starts or stops
+  // flowing, and waiting for the next dashboard refresh would show the old one.
+  if (flank) gladys.requestWidgetRefresh(CHARGER_WIDGET);
 }
-
-let changed = false;
 
 /**
  * The two scene triggers: "started" and "finished".
  *
  * The comparison lives in src/scenes.js, next to the comment that explains why a
  * trigger cannot carry a threshold. Here is only the part that needs the running
- * process: remembering the last state, and publishing what came back.
+ * process: remembering the last state, publishing what came back, and telling
+ * the card that its sentence has changed.
  */
 async function fireChargingEvents() {
   const { events, side } = chargingEvents({ snapshot, previous: lastCharging });
-  changed = side !== lastCharging;
+  flank = side !== lastCharging;
   lastCharging = side;
   for (const event of events) {
     await gladys
@@ -218,9 +228,9 @@ gladys.onScanRequest(async () => {
 });
 
 // --- Polling -----------------------------------------------------------------
-// Gladys ticks a polled device once a minute at most; the interval the user
-// chose is applied by skipping ticks, so a 60-second setting simply ignores
-// every other tick.
+// Gladys ticks a polled device once a minute at most; the interval the user chose
+// is applied by skipping ticks, so a 60-second setting simply ignores every other
+// tick.
 gladys.onPoll(async (polled) => {
   if (!client || !device) return;
   if (polled.external_id !== deviceExternalId(gladys, device)) return;
@@ -251,27 +261,35 @@ gladys.onAction('test_connection', async () => {
     const readings = decorate(await client.readAll());
     snapshot = readings;
     const looksLikeText = /^[\x20-\x7e]*$/.test(info.serial ?? '');
+    const hint = looksLikeText
+      ? ''
+      : ' Die Seriennummer ist kein lesbarer Text — vermutlich stimmt ADDRESS_BASE in src/vestel/registers.js nicht.';
     return {
       de:
         `Antwort: ${info.brand ?? '?'} ${info.model ?? '?'}, Seriennummer ${info.serial ?? '?'}, ` +
         `Firmware ${info.firmware ?? '?'}. Zustand ${readings.chargepoint_state ?? '?'}, ` +
-        `${Object.keys(readings).length} Werte.` +
-        (looksLikeText ? '' : ' Die Seriennummer ist kein lesbarer Text — vermutlich stimmt ADDRESS_BASE in src/vestel/registers.js nicht.'),
+        `${Object.keys(readings).length} Werte.${hint}`,
       en:
         `Answered: ${info.brand ?? '?'} ${info.model ?? '?'}, serial ${info.serial ?? '?'}, ` +
         `firmware ${info.firmware ?? '?'}. State ${readings.chargepoint_state ?? '?'}, ` +
         `${Object.keys(readings).length} readings.` +
-        (looksLikeText ? '' : ' The serial number is not readable text — ADDRESS_BASE in src/vestel/registers.js is probably wrong.'),
+        (looksLikeText
+          ? ''
+          : ' The serial number is not readable text — ADDRESS_BASE in src/vestel/registers.js is probably wrong.'),
       fr:
         `Réponse : ${info.brand ?? '?'} ${info.model ?? '?'}, série ${info.serial ?? '?'}, ` +
         `firmware ${info.firmware ?? '?'}. État ${readings.chargepoint_state ?? '?'}, ` +
         `${Object.keys(readings).length} valeurs.` +
-        (looksLikeText ? '' : ' Le numéro de série n’est pas du texte lisible — ADDRESS_BASE dans src/vestel/registers.js est probablement faux.'),
+        (looksLikeText
+          ? ''
+          : ' Le numéro de série n’est pas du texte lisible — ADDRESS_BASE dans src/vestel/registers.js est probablement faux.'),
       es:
         `Respuesta: ${info.brand ?? '?'} ${info.model ?? '?'}, serie ${info.serial ?? '?'}, ` +
         `firmware ${info.firmware ?? '?'}. Estado ${readings.chargepoint_state ?? '?'}, ` +
         `${Object.keys(readings).length} valores.` +
-        (looksLikeText ? '' : ' El número de serie no es texto legible: probablemente ADDRESS_BASE en src/vestel/registers.js es incorrecto.'),
+        (looksLikeText
+          ? ''
+          : ' El número de serie no es texto legible: probablemente ADDRESS_BASE en src/vestel/registers.js es incorrecto.'),
     };
   } catch (err) {
     logger.error(`Connection test failed (${config.host}): ${err.message}`);
@@ -288,7 +306,7 @@ gladys.onAction('test_connection', async () => {
 // The user moved a control on the device page. Do the work on the wallbox, then
 // confirm the value back so the interface shows what really happened. Throwing
 // fails the command visibly, which is what a refused write should do.
-gladys.onSetValue(async (device_, feature, value) => {
+gladys.onSetValue(async (_device, feature, value) => {
   if (!client) throw new Error('Wallbox nicht verbunden');
   const ids = gladys.externalIds(PLATFORM_TYPE, platformId(device));
   if (feature.external_id !== ids.feature(KEY.CHARGING_CURRENT)) {
@@ -309,7 +327,7 @@ for (const [key, handler] of Object.entries(SCENE_ACTIONS)) {
 }
 
 // --- Dashboard widget --------------------------------------------------------
-gladys.onWidgetGet(CHARGER_WIDGET, async ({ settings }) => {
+gladys.onWidgetGet(CHARGER_WIDGET, async () => {
   // Read the wallbox first, so the card shows the truth, but keep the last known
   // state if that read fails: a stale sentence beats an empty card.
   if (client) snapshot = decorate(await client.readAll().catch(() => snapshot));
@@ -323,31 +341,24 @@ gladys.onWidgetGet(CHARGER_WIDGET, async ({ settings }) => {
       meter_reading: ids?.feature(KEY.METER_READING) ?? null,
       charging_current: ids?.feature(KEY.CHARGING_CURRENT) ?? null,
     },
-    settings,
-    controlled: control.active,
+    // The NUMBER the tile is labelled with, or null when nothing is under our
+    // control and the wallbox is using its own failsafe value.
+    controlled: control.current,
     t,
-    sentence: (state) => stateSentence(state, 'de', { power: state.power, charging: state.chargepoint_state === 'charging' }),
+    sentence: (state) => stateSentence(state),
   });
 });
 
-gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params, { settings }) => {
-  const intent = chargerAction({
-    actionKey,
-    params,
-    state: snapshot,
-    controlled: control.active,
-    t,
+gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
+  const intent = chargerAction({ actionKey, params, state: snapshot, t });
+  // The card decides what a tap means; this is where it happens. The current is
+  // always SET — the wallbox has no "no charging" register, and handing control
+  // back is what the scene action does.
+  await SCENE_ACTIONS.set_charging_current({
+    client,
+    fields: { current: intent.current },
+    control,
   });
-  // The card decides what a tap means; this is where it happens.
-  if (intent.release) {
-    await SCENE_ACTIONS.release_charging_current({ client, control });
-  } else {
-    await SCENE_ACTIONS.set_charging_current({
-      client,
-      fields: { current: intent.current },
-      control,
-    });
-  }
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
   return intent.toast;
 });
@@ -360,6 +371,7 @@ gladys.onConfigUpdated(async (newConfig) => {
     failsafeTimeout: config.failsafe_timeout,
   });
   lastCharging = null;
+  flank = false;
   if (await connectWallbox()) await publishDevice();
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
 });
