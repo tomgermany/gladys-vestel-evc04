@@ -18,6 +18,12 @@
 // the car asked for it" and "charges at 6 A because nothing controls it any
 // more" look identical on the device page.
 //
+// WHY THERE IS NO `settings` PARAMETER
+// There is one wallbox, and the card shows it. A per-instance setting would only
+// exist to choose between several devices, and this integration publishes one.
+// Adding a parameter nobody reads is how a lint rule gets silenced instead of
+// obeyed.
+//
 // THE BUDGET — why the order below is a decision
 // A card takes at most 8 components, and among them at most 4 BUTTONS, 6 value
 // tiles, 2 texts and 1 status list. Anything past a cap is DROPPED, in content
@@ -46,6 +52,9 @@ export const ACTION = {
 /** How many amperes one tap of the current buttons moves. */
 export const CURRENT_STEP = 1;
 
+/** The smallest charging current a vehicle is expected to accept, in amperes. */
+export const MIN_CURRENT = 6;
+
 /**
  * The label of the current tile, which names the number rather than the concept.
  *
@@ -63,7 +72,6 @@ export function currentLabel(t, current) {
  * @param {object|null} ctx.state the last reading snapshot
  * @param {object|null} ctx.device { name, serial, model, host }
  * @param {object} ctx.ids { power, session_energy, meter_reading, charging_current }
- * @param {object} ctx.settings the widget instance settings
  * @param {number|null} ctx.controlled the charging current under our control, or null
  * @param {Function} ctx.t labels, per language
  * @param {Function} ctx.sentence state as one sentence, per language
@@ -72,7 +80,6 @@ export function buildChargerContent({
   state,
   device,
   ids = {},
-  settings = {},
   controlled = null,
   t = (key) => key,
   sentence = () => '',
@@ -207,8 +214,8 @@ export function chargerAction({ actionKey, params, state, t = (key) => key }) {
       const step = Number(params?.step ?? CURRENT_STEP);
       const delta = actionKey === ACTION.CURRENT_UP ? step : -step;
       const known = Number(state?.charging_current);
-      const base = Number.isFinite(known) && known > 0 ? known : Number(state?.evse_min_current) || 6;
-      const next = Math.max(6, Math.round(base + delta));
+      const base = Number.isFinite(known) && known > 0 ? known : Number(state?.evse_min_current) || MIN_CURRENT;
+      const next = Math.max(MIN_CURRENT, Math.round(base + delta));
       return { current: next, toast: t('control', next) };
     }
     default:
