@@ -1,5 +1,6 @@
 // -----------------------------------------------------------------------------
-// Hebt die Version an: in package.json UND im Manifest, dazu den Changelog.
+// Hebt die Version an: in package.json UND im Manifest, dazu den Changelog —
+// und legt die Notizen fuer den GitHub-Release ab.
 //
 // WARUM EIN SKRIPT UND NICHT DREI HANDGRIFFE
 // Das Manifest nennt das Image, das Gladys zieht, und package.json traegt dieselbe
@@ -7,11 +8,24 @@
 // ist die alte Version, die weiter ausgeliefert wird. Ein Skript, das beide
 // zusammen schreibt, nimmt genau diese Fehlerklasse raus.
 //
+// WARUM DIE NOTIZEN HIER ENTSTEHEN UND NICHT MIT --generate-notes
+// Die Release-Notizen sollen die Changelog-Sektion dieser Version sein, nicht eine
+// von GitHub erfundene Liste zusammengefasster Commits. Dafuer wird die Sektion
+// hier ausgelesen und in eine eigene Datei geschrieben; der Workflow verweist mit
+// `--notes-file` darauf.
+//
+// WARUM DAS EIN EIGENER ABSCHNITT WAR
+// Der Workflow verweist auf `steps.release.outputs.notes_file`. Diesen Ausgang gab
+// es hier einmal nicht, und `--notes-file ""` brach `gh release create` ab — der Tag
+// war schon gesetzt, der Release fehlte. Deshalb schreibt dieses Skript BEIDE
+// Ausgaenge, die der Workflow nennt.
+//
 // Aufruf:  node .github/scripts/release.mjs patch|minor|major
-// Ausgabe: version=<neu>  nach $GITHUB_OUTPUT, und die neue CHANGELOG.md
+// Ausgabe: version=<neu> und notes_file=<pfad> nach $GITHUB_OUTPUT
 // ---------------------------------------------------------------------------
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 const bump = process.argv[2];
 if (!['patch', 'minor', 'major'].includes(bump)) {
@@ -33,8 +47,8 @@ pkg.version = version;
 writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
 
 // --- Manifest: die Version UND der Tag im Image ------------------------------
-// Beide gehoeren zusammen: ein Manifest, das die neue Version nennt, aber noch
-// auf das alte Image zeigt, ist genau der halbe Zustand, den es zu vermeiden gilt.
+// Beide gehoeren zusammen: ein Manifest, das die neue Version nennt, aber noch auf
+// das alte Image zeigt, ist genau der halbe Zustand, den es zu vermeiden gilt.
 const manifestPath = 'gladys-assistant-integration.json';
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 manifest.version = version;
@@ -43,7 +57,7 @@ writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 // --- CHANGELOG ---------------------------------------------------------------
 // Die `## [Unreleased]`-Sektion wird zur neuen Version. Gibt es keine, wird eine
-// schlichte Sektion angelegt: eine Version ohne Changelog-Zeile ist besser als ein
+// Sektion oben angelegt: eine Version ohne Changelog-Zeile ist besser als ein
 // Skript, das den Lauf abbricht.
 const changelogPath = 'CHANGELOG.md';
 const today = new Date().toISOString().slice(0, 10);
@@ -58,8 +72,39 @@ if (changelog.includes('## [Unreleased]')) {
 }
 writeFileSync(changelogPath, changelog);
 
+// --- Die Notizen der neuen Version ------------------------------------------
+// Alles, was unter `## [<version>]` steht, bis zur naechsten Sektion auf gleicher
+// Ebene. Der Titel selbst kommt mit, damit die Notiz selbst sagt, worum es geht.
+function sectionFor(text, wanted) {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => line.startsWith(`## [${wanted}]`));
+  if (start === -1) return null;
+  const rest = lines.slice(start + 1);
+  const next = rest.findIndex((line) => line.startsWith('## ['));
+  const body = (next === -1 ? rest : rest.slice(0, next)).join('\n').trim();
+  return `${lines[start].trim()}\n\n${body}\n`;
+}
+
+const notesPath = join(process.cwd(), 'RELEASE_NOTES.md');
+const notes = sectionFor(changelog, version);
+if (notes) {
+  writeFileSync(notesPath, notes);
+} else {
+  // Ein Release ohne Notizen ist besser als ein Lauf, der hier abbricht: der Tag
+  // und das Image sind zu diesem Zeitpunkt bereits wichtig genug.
+  writeFileSync(notesPath, `## [${version}] - ${today}\n\nKeine Notizen eingetragen.\n`);
+}
+
 // --- Ausgabe fuers Workflow --------------------------------------------------
+// BEIDE Ausgaenge, die release.yml nennt. Fehlt einer davon, wird daraus ein
+// leerer Parameter, und der Schritt scheitert an einer Stelle, an der niemand
+// einen Fehler vermutet.
 const out = process.env.GITHUB_OUTPUT;
-if (out) writeFileSync(out, `version=${version}\n`, { flag: 'a' });
-console.log(`Version: ${version}`);
-console.log(`Image:   ${manifest.docker_image}`);
+if (out) {
+  writeFileSync(out, `version=${version}\n`, { flag: 'a' });
+  writeFileSync(out, `notes_file=${notesPath}\n`, { flag: 'a' });
+}
+
+console.log(`Version:     ${version}`);
+console.log(`Image:       ${manifest.docker_image}`);
+console.log(`Notizen:     ${notesPath}`);
