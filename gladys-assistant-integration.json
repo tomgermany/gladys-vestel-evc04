@@ -1,0 +1,223 @@
+{
+  "manifest_version": 1,
+  "type": "device",
+  "name": "Vestel EVC04 Wallbox",
+  "description": {
+    "de": "Steuert und überwacht die Vestel EVC04 Wallbox im lokalen Netz über Modbus TCP.",
+    "en": "Controls and monitors the Vestel EVC04 charging station over Modbus TCP.",
+    "fr": "Pilote et surveille la borne Vestel EVC04 en Modbus TCP.",
+    "es": "Controla y supervisa el cargador Vestel EVC04 por Modbus TCP."
+  },
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/tomgermany/gladys-vestel-evc04:0.1.0",
+  "gladys_version": ">=5.1.0",
+  "categories": ["energy"],
+  "transports": ["local"],
+  "config_schema": [
+    {
+      "key": "host",
+      "type": "string",
+      "required": true,
+      "label": {
+        "de": "Adresse der Wallbox",
+        "en": "Wallbox address",
+        "fr": "Adresse de la borne",
+        "es": "Dirección del cargador"
+      },
+      "description": {
+        "de": "IP-Adresse oder mDNS-Name. Eine feste IP per DHCP-Reservierung ist robuster.",
+        "en": "IP address or mDNS name. A fixed IP via DHCP reservation is more robust.",
+        "fr": "Adresse IP ou nom mDNS. Une IP fixe par réservation DHCP est plus robuste.",
+        "es": "Dirección IP o nombre mDNS. Una IP fija por reserva DHCP es más robusta."
+      }
+    },
+    {
+      "key": "modbus_port",
+      "type": "number",
+      "required": false,
+      "default": 502,
+      "label": { "de": "Modbus-Port", "en": "Modbus port", "fr": "Port Modbus", "es": "Puerto Modbus" },
+      "description": {
+        "de": "Standard 502. Nur ändern, wenn der Port in der Wallbox umgestellt wurde.",
+        "en": "Default 502. Only change it if the port was changed on the wallbox.",
+        "fr": "Par défaut 502. À modifier seulement si le port a été changé.",
+        "es": "Por defecto 502. Cámbialo solo si el puerto se cambió."
+      }
+    },
+    {
+      "key": "unit_id",
+      "type": "number",
+      "required": false,
+      "default": 255,
+      "label": { "de": "Modbus Unit ID", "en": "Modbus unit id", "fr": "Unit ID Modbus", "es": "Unit ID Modbus" },
+      "description": {
+        "de": "Die EVC04 antwortet auf Unit ID 255. Nur ändern, wenn dein Gerät anders konfiguriert ist.",
+        "en": "The EVC04 answers on unit id 255. Only change it if your device is configured differently.",
+        "fr": "L'EVC04 répond sur l'unit id 255. À modifier seulement si votre appareil est configuré autrement.",
+        "es": "El EVC04 responde en unit id 255. Cámbialo solo si tu aparato está configurado de otra forma."
+      }
+    },
+    {
+      "key": "poll_frequency",
+      "type": "number",
+      "required": false,
+      "default": 30000,
+      "label": {
+        "de": "Abfrageintervall in Millisekunden",
+        "en": "Poll interval in milliseconds",
+        "fr": "Intervalle d'interrogation en millisecondes",
+        "es": "Intervalo de consulta en milisegundos"
+      },
+      "description": {
+        "de": "Wie oft die Werte gelesen werden. Erlaubt sind 1000, 2000, 10000, 15000, 30000 und 60000.",
+        "en": "How often the values are read. Allowed values are 1000, 2000, 10000, 15000, 30000 and 60000.",
+        "fr": "Fréquence de lecture. Valeurs autorisées : 1000, 2000, 10000, 15000, 30000 et 60000.",
+        "es": "Frecuencia de lectura. Valores permitidos: 1000, 2000, 10000, 15000, 30000 y 60000."
+      }
+    },
+    {
+      "key": "control_intro",
+      "type": "section",
+      "label": { "de": "Steuerung", "en": "Control", "fr": "Commande", "es": "Control" },
+      "description": {
+        "de": "Der Ladestrom wird in Register 5004 gesetzt. Solange ein Sollwert gesetzt ist, hält die Integration den Alive-Register (6000) in der halben Failsafe-Zeit. Ohne das fällt die Wallbox auf den Failsafe-Strom zurück.",
+        "en": "The charging current is set in register 5004. While a setpoint is active, the integration keeps the alive register (6000) answered within half the failsafe timeout. Without it the wallbox falls back to the failsafe current.",
+        "fr": "Le courant de charge se règle dans le registre 5004. Tant qu'une consigne est active, l'intégration entretient le registre alive (6000). Sans cela, la borne retombe sur le courant de secours.",
+        "es": "La corriente de carga se ajusta en el registro 5004. Mientras hay una consigna activa, la integración mantiene el registro alive (6000). Sin ello, el cargador vuelve a la corriente de seguridad."
+      }
+    },
+    {
+      "key": "failsafe_current",
+      "type": "number",
+      "required": false,
+      "default": 6,
+      "label": { "de": "Failsafe-Strom in A", "en": "Failsafe current in A", "fr": "Courant de secours en A", "es": "Corriente de seguridad en A" },
+      "description": {
+        "de": "Der Strom, auf den die Wallbox zurückfällt, wenn der Alive-Register nicht mehr bedient wird. Sinnvoll ist der kleinste Wert, den dein Fahrzeug akzeptiert.",
+        "en": "The current the wallbox falls back to when the alive register stops being answered. The smallest value your vehicle accepts is the safe choice.",
+        "fr": "Le courant sur lequel la borne retombe quand le registre alive n'est plus entretenu. La plus petite valeur acceptée par votre véhicule est le choix sûr.",
+        "es": "La corriente a la que vuelve el cargador cuando el registro alive deja de atenderse. El valor más pequeño que acepte tu vehículo es lo prudente."
+      }
+    },
+    {
+      "key": "failsafe_timeout",
+      "type": "number",
+      "required": false,
+      "default": 20,
+      "label": { "de": "Failsafe-Zeit in Sekunden", "en": "Failsafe time in seconds", "fr": "Temps de secours en secondes", "es": "Tiempo de seguridad en segundos" },
+      "description": {
+        "de": "Frist, nach der die Wallbox auf den Failsafe-Strom wechselt. Der Alive-Register wird in der halben Zeit bedient, mindestens alle 3 Sekunden.",
+        "en": "Deadline after which the wallbox switches to the failsafe current. The alive register is answered within half of it, at least every 3 seconds.",
+        "fr": "Délai après lequel la borne passe au courant de secours. Le registre alive est entretenu dans la moitié, au minimum toutes les 3 secondes.",
+        "es": "Plazo tras el cual el cargador cambia a la corriente de seguridad. El registro alive se atiende en la mitad, como mínimo cada 3 segundos."
+      }
+    }
+  ],
+  "actions": [
+    {
+      "key": "test_connection",
+      "label": { "de": "Verbindung prüfen", "en": "Test the connection", "fr": "Tester la connexion", "es": "Comprobar la conexión" },
+      "description": {
+        "de": "Liest die Wallbox jetzt und sagt, was sie geantwortet hat: Seriennummer, Modell, Firmware und Ladezustand.",
+        "en": "Reads the wallbox now and reports what it answered: serial number, model, firmware and charging state.",
+        "fr": "Lit la borne maintenant et indique ce qu'elle a répondu : numéro de série, modèle, firmware et état.",
+        "es": "Lee el cargador ahora e indica lo que ha respondido: número de serie, modelo, firmware y estado."
+      },
+      "timeout_seconds": 30
+    }
+  ],
+  "widgets": [
+    {
+      "key": "charger",
+      "label": { "de": "Wallbox", "en": "Wallbox", "fr": "Borne de recharge", "es": "Cargador" },
+      "description": {
+        "de": "Ladezustand in Worten, die aktuelle Ladeleistung und der Ladestrom live.",
+        "en": "Charging state in words, the current charging power and the charging current live.",
+        "fr": "L'état de charge en mots, la puissance en cours et le courant en direct.",
+        "es": "El estado de carga en palabras, la potencia actual y la corriente en directo."
+      },
+      "icon": "zap",
+      "action_timeout_seconds": 15,
+      "settings": [
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "label": { "de": "Wallbox", "en": "Wallbox", "fr": "Borne", "es": "Cargador" },
+          "description": {
+            "de": "Welche Wallbox diese Kachel zeigt. Leer lassen für die erste.",
+            "en": "Which wallbox this tile shows. Leave empty for the first one.",
+            "fr": "Quelle borne cette tuile affiche. Vide pour la première.",
+            "es": "Qué cargador muestra esta tarjeta. Vacío para el primero."
+          },
+          "required": false
+        }
+      ]
+    }
+  ],
+  "scene_triggers": [
+    {
+      "key": "charging_started",
+      "label": { "de": "Wallbox lädt", "en": "Wallbox charging", "fr": "La borne charge", "es": "El cargador carga" },
+      "description": {
+        "de": "Die Wallbox hat begonnen zu laden. Feuert einmal beim Übergang, nicht bei jedem Lesevorgang.",
+        "en": "The wallbox started charging. Fires once on the transition, not on every read.",
+        "fr": "La borne a commencé à charger. Se déclenche une fois au changement, pas à chaque lecture.",
+        "es": "El cargador ha empezado a cargar. Se activa una vez en el cambio, no en cada lectura."
+      },
+      "variables": [
+        { "key": "power", "type": "number", "label": { "de": "Leistung in Watt", "en": "Power in watts", "fr": "Puissance en watts", "es": "Potencia en vatios" } },
+        { "key": "current", "type": "number", "label": { "de": "Ladestrom in A", "en": "Charging current in A", "fr": "Courant de charge en A", "es": "Corriente de carga en A" } },
+        { "key": "energy", "type": "number", "label": { "de": "Zählerstand in kWh", "en": "Meter reading in kWh", "fr": "Index en kWh", "es": "Lectura del contador en kWh" } }
+      ]
+    },
+    {
+      "key": "charging_finished",
+      "label": { "de": "Wallbox beendet", "en": "Wallbox finished", "fr": "La borne a terminé", "es": "El cargador ha terminado" },
+      "description": {
+        "de": "Die Wallbox hat aufgehört zu laden. Feuert einmal beim Übergang, nicht bei jedem Lesevorgang.",
+        "en": "The wallbox stopped charging. Fires once on the transition, not on every read.",
+        "fr": "La borne a cessé de charger. Se déclenche une fois au changement, pas à chaque lecture.",
+        "es": "El cargador ha dejado de cargar. Se activa una vez en el cambio, no en cada lectura."
+      },
+      "variables": [
+        { "key": "energy", "type": "number", "label": { "de": "Zählerstand in kWh", "en": "Meter reading in kWh", "fr": "Index en kWh", "es": "Lectura del contador en kWh" } },
+        { "key": "session_energy", "type": "number", "label": { "de": "Energie dieser Ladung in kWh", "en": "Energy of this session in kWh", "fr": "Énergie de cette charge en kWh", "es": "Energía de esta carga en kWh" } },
+        { "key": "duration", "type": "number", "label": { "de": "Dauer in Sekunden", "en": "Duration in seconds", "fr": "Durée en secondes", "es": "Duración en segundos" } }
+      ]
+    }
+  ],
+  "scene_actions": [
+    {
+      "key": "set_charging_current",
+      "label": { "de": "Ladestrom setzen", "en": "Set the charging current", "fr": "Régler le courant de charge", "es": "Ajustar la corriente de carga" },
+      "description": {
+        "de": "Setzt den Ladestrom in Ampere. Solange ein Wert gesetzt ist, hält die Integration den Alive-Register.",
+        "en": "Sets the charging current in amperes. While a value is set, the integration keeps the alive register answered.",
+        "fr": "Règle le courant de charge en ampères. Tant qu'une valeur est fixée, l'intégration entretient le registre alive.",
+        "es": "Ajusta la corriente de carga en amperios. Mientras hay un valor fijado, la integración mantiene el registro alive."
+      },
+      "timeout_seconds": 30,
+      "fields": [
+        { "key": "current", "type": "number", "required": true, "label": { "de": "Ladestrom in A", "en": "Charging current in A", "fr": "Courant de charge en A", "es": "Corriente de carga en A" } }
+      ],
+      "outputs": [
+        { "key": "current", "type": "number", "label": { "de": "Gesetzter Strom in A", "en": "Current set in A", "fr": "Courant réglé en A", "es": "Corriente ajustada en A" } }
+      ]
+    },
+    {
+      "key": "release_charging_current",
+      "label": { "de": "Ladestrom freigeben", "en": "Release the charging current", "fr": "Libérer le courant de charge", "es": "Liberar la corriente de carga" },
+      "description": {
+        "de": "Beendet die Steuerung und stellt den Failsafe-Strom wieder her. Der Alive-Register wird nicht mehr bedient.",
+        "en": "Ends the control and restores the failsafe current. The alive register stops being answered.",
+        "fr": "Met fin à la commande et rétablit le courant de secours. Le registre alive n'est plus entretenu.",
+        "es": "Termina el control y restablece la corriente de seguridad. El registro alive deja de atenderse."
+      },
+      "timeout_seconds": 30,
+      "outputs": [
+        { "key": "current", "type": "number", "label": { "de": "Failsafe-Strom in A", "en": "Failsafe current in A", "fr": "Courant de secours en A", "es": "Corriente de seguridad en A" } }
+      ]
+    }
+  ]
+}
