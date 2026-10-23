@@ -1,0 +1,23 @@
+# Changelog
+
+Alle nennenswerten Änderungen dieser Integration.
+
+## [Unreleased]
+
+## [0.1.0] - 2026-10-23
+
+Erste Fassung.
+
+- Modbus-TCP-Anbindung der Vestel EVC04 über Port 502 und Unit ID 255.
+- Gerät mit allen Werten, die das Gerät beantwortet: Ladezustand, Kabelzustand,
+  Gerätezustand, Fehlercode, Ströme und Spannungen je Phase, Leistung gesamt und je
+  Phase, Zählerstand, Energie und Dauer der laufenden Ladung.
+- Die Grenzwerte des Geräts (minimaler und maximaler Ladestrom, Kabel-Maximum) sind
+  sichtbar und nur lesbar: was in der Wallbox eingestellt ist, gilt.
+- Der Ladestrom ist das einzige schreibbare Feature. Ein Sollwert wird gegen die
+  Grenzen des Geräts geklemmt, und der Alive-Register wird bedient, solange ein
+  Sollwert gilt.
+- Kachel „Wallbox“ mit dem Ladezustand in Worten, der Live-Leistung, dem Ladestrom
+  mit Zahl und den Knöpfen −1 A, +1 A und Freigeben.
+- Szenenauslöser „Wallbox lädt“ und „Wallbox beendet“, beide auf der Flanke.
+- Szenenaktionen „Ladestrom setzen“ und „Ladestrom freigeben“.
