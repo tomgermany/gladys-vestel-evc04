@@ -12,28 +12,33 @@
 //
 // WHY THE CONTROL IS SHOWN AT ALL
 // Setting a charging current puts the wallbox under this integration's control:
-// from that moment the failsafe value no longer applies, and the heartbeat in
-// src/alive.js keeps the value alive. A card that did not say so would leave the
-// user guessing which of the two states is in force — "charges at 6 A because
-// the car asked for it" and "charges at 6 A because nothing controls it any
-// more" look identical on the device page.
+// from that moment the setpoint holds, and the heartbeat in src/alive.js keeps it
+// alive. A card that did not say so would leave the user guessing which of the two
+// states is in force — "charges at 6 A because the car asked for it" and "charges
+// at 6 A because nobody is controlling it" look identical on the device page.
+//
+// WHY THERE IS A RELEASE BUTTON AND NOT JUST +/- STEPS
+// A setpoint can be set from a scene and released from a scene; if the card could
+// only set, the difference would be invisible here. Both surfaces therefore offer
+// both, and the button appears only while a setpoint is under control — a button
+// that would do nothing is worse than no button.
 //
 // WHY THERE IS NO `settings` PARAMETER
 // There is one wallbox, and the card shows it. A per-instance setting would only
-// exist to choose between several devices, and this integration publishes one.
-// Adding a parameter nobody reads is how a lint rule gets silenced instead of
-// obeyed.
+// choose between several devices, and this integration publishes one. A parameter
+// nobody reads is how a lint rule gets silenced instead of obeyed.
 //
 // THE BUDGET — why the order below is a decision
 // A card takes at most 8 components, and among them at most 4 BUTTONS, 6 value
 // tiles, 2 texts and 1 status list. Anything past a cap is DROPPED, in content
 // order, silently. So the sentence comes first, then the values a user actually
-// looks at, then the buttons. A fifth button would simply never appear.
+// looks at, then the buttons. A fifth button would simply never appear, which is
+// why the release button is conditional.
 //
 // THE TILES ARE BOUND TO FEATURES, NOT TO NUMBERS
 // A tile with `device_feature` carries the external id of a published feature,
-// and Gladys reads that feature's own value and history. It therefore stays
-// right by itself and needs nothing from here.
+// and Gladys reads that feature's own value and history. It therefore stays right
+// by itself and needs nothing from here.
 // -----------------------------------------------------------------------------
 
 /** Widget key, as declared in the manifest `widgets` field. */
@@ -47,6 +52,7 @@ export const CHARGER_WIDGET = 'charger';
 export const ACTION = {
   CURRENT_DOWN: 'current_down',
   CURRENT_UP: 'current_up',
+  RELEASE: 'release',
 };
 
 /** How many amperes one tap of the current buttons moves. */
@@ -149,9 +155,8 @@ export function buildChargerContent({
   //    Two states that look alike and are not:
   //      - a value under our control: the heartbeat is running and the wallbox
   //        charges with exactly this current;
-  //      - no value under our control: the wallbox uses its own failsafe value,
-  //        which this integration does not read back from the device and
-  //        therefore does not guess at.
+  //      - no value under our control: the wallbox uses its own setting, which
+  //        this integration does not read back and therefore does not guess at.
   //
   //    A register READING is not the same as a value WE SET: the register holds
   //    whatever was written last, by anyone. So the tile is bound to the feature
@@ -167,8 +172,8 @@ export function buildChargerContent({
     });
   }
 
-  // 6. The control: two buttons that move the charging current one ampere at a
-  //    time, inside what the cable and the EVSE allow.
+  // 6. The control. Two buttons that move the charging current one ampere at a
+  //    time, inside what the device and its cable allow.
   if (ids.charging_current) {
     components.push({
       type: 'button',
@@ -184,6 +189,17 @@ export function buildChargerContent({
       style: 'secondary',
       action: { key: ACTION.CURRENT_UP, params: { step: CURRENT_STEP } },
     });
+
+    // 7. The release button, only while a setpoint is under control.
+    if (controlled !== null) {
+      components.push({
+        type: 'button',
+        label: t('release'),
+        icon: 'x',
+        style: 'secondary',
+        action: { key: ACTION.RELEASE },
+      });
+    }
   }
 
   return { ttl_seconds: 60, components };
@@ -206,17 +222,27 @@ function stateColor(state) {
  *
  * `step` moves the current from the value the user sees, not from a value
  * remembered somewhere else: two taps in a row then give two different currents.
+ * `limits` are the figures the device reported, so a tap can never leave the range
+ * the wallbox accepts.
  */
-export function chargerAction({ actionKey, params, state, t = (key) => key }) {
+export function chargerAction({ actionKey, params, state, controlled = null, limits, t = (key) => key }) {
   switch (actionKey) {
     case ACTION.CURRENT_DOWN:
     case ACTION.CURRENT_UP: {
       const step = Number(params?.step ?? CURRENT_STEP);
       const delta = actionKey === ACTION.CURRENT_UP ? step : -step;
       const known = Number(state?.charging_current);
-      const base = Number.isFinite(known) && known > 0 ? known : Number(state?.evse_min_current) || MIN_CURRENT;
-      const next = Math.max(MIN_CURRENT, Math.round(base + delta));
+      const base = Number.isFinite(known) && known > 0 ? known : MIN_CURRENT;
+      const min = Math.max(MIN_CURRENT, Number(limits?.min) || MIN_CURRENT);
+      const max = Math.max(min, Number(limits?.max) || MIN_CURRENT);
+      const next = Math.min(max, Math.max(min, Math.round(base + delta)));
       return { current: next, toast: t('control', next) };
+    }
+    case ACTION.RELEASE: {
+      if (controlled === null || controlled === undefined) {
+        throw new Error('No charging current is under control');
+      }
+      return { release: true, toast: t('releasing') };
     }
     default:
       throw new Error(`Unknown widget action: ${actionKey}`);

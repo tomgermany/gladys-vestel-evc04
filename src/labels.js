@@ -4,8 +4,7 @@
 // WHY A FILE OF ITS OWN
 // Texts come from two places and are not interchangeable:
 //   - the MANIFEST carries the Configuration screen, the widget name and the
-//     scene labels. There a text is a language map and Gladys picks the
-//     language;
+//     scene labels. There a text is a language map and Gladys picks the language;
 //   - the CODE builds the widget content at runtime, and in that vocabulary a
 //     label is a single string. So the runtime texts live here and the caller
 //     passes the language it wants.
@@ -59,10 +58,9 @@ export const TEXT = {
     current: 'Ladestrom',
     energy: 'Geladene Energie',
     meter: 'Zählerstand',
-    noControl: 'Kein Ladestrom gesetzt – die Wallbox lädt mit ihrem Failsafe-Wert.',
     control: (a) => `Ladestrom auf ${a} A gesetzt.`,
+    release: 'Freigeben',
     releasing: 'Ladestrom wird freigegeben …',
-    releasing_done: 'Ladestrom freigegeben.',
     reading: 'Werte werden gelesen …',
   },
   en: {
@@ -85,10 +83,9 @@ export const TEXT = {
     current: 'Charging current',
     energy: 'Energy charged',
     meter: 'Meter reading',
-    noControl: 'No charging current set – the wallbox uses its failsafe value.',
     control: (a) => `Charging current set to ${a} A.`,
+    release: 'Release',
     releasing: 'Releasing the charging current…',
-    releasing_done: 'Charging current released.',
     reading: 'Reading the values…',
   },
   fr: {
@@ -111,10 +108,9 @@ export const TEXT = {
     current: 'Courant de charge',
     energy: 'Énergie chargée',
     meter: 'Index',
-    noControl: 'Aucun courant de charge réglé – la borne utilise sa valeur de secours.',
     control: (a) => `Courant de charge réglé à ${a} A.`,
+    release: 'Libérer',
     releasing: 'Libération du courant de charge…',
-    releasing_done: 'Courant de charge libéré.',
     reading: 'Lecture des valeurs…',
   },
   es: {
@@ -137,10 +133,9 @@ export const TEXT = {
     current: 'Corriente de carga',
     energy: 'Energía cargada',
     meter: 'Lectura del contador',
-    noControl: 'Sin corriente de carga fijada: el cargador usa su valor de seguridad.',
     control: (a) => `Corriente de carga fijada en ${a} A.`,
+    release: 'Liberar',
     releasing: 'Liberando la corriente de carga…',
-    releasing_done: 'Corriente de carga liberada.',
     reading: 'Leyendo los valores…',
   },
 };
