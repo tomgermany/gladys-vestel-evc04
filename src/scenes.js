@@ -23,9 +23,16 @@
 // `set_charging_current` and `release_charging_current` belong to the heartbeat
 // in src/alive.js: setting a current starts it, releasing stops it. A scene that
 // only reads values never touches either.
+//
+// WHAT MAY BE WRITTEN, AND WHY THAT IS A SHORT LIST
+// The charging current, and nothing else. A setpoint overrides what the wallbox
+// would do on its own, which is the point; releasing hands that back by writing
+// the FLOOR the device itself allows — a charging current again, not a
+// configuration value. Nothing here can change how the wallbox is set up, so a
+// scene author who does not know the device cannot misconfigure it.
 // -----------------------------------------------------------------------------
 
-import { CONTROL, FAILSAFE } from './vestel/registers.js';
+import { CONTROL } from './vestel/registers.js';
 
 /** The trigger keys, as declared in the manifest. */
 export const TRIGGER = {
@@ -107,19 +114,18 @@ export const SCENE_ACTIONS = {
   /**
    * Set the charging current, and start the heartbeat.
    *
-   * The value is clamped to what the EVSE and the cable allow, read from the
-   * device. Asking a wallbox for more than its cable accepts is not an error it
-   * reports; it is simply a value it quietly ignores.
+   * The value is clamped to what the device and the cable allow, read from the
+   * wallbox itself. Asking for more than the device accepts is not an error it
+   * reports — it simply charges at its own maximum — so clamping here is what
+   * keeps the number a scene reports the number that is really in force.
    */
   async set_charging_current({ client, fields, control }) {
     if (!client) throw new Error('Keine Verbindung zur Wallbox');
     const wanted = Number(fields?.current);
     if (!Number.isFinite(wanted)) throw new Error('Der Ladestrom muss eine Zahl sein');
 
-    const limits = await client.readLimits().catch(() => null);
-    const min = limits?.min ?? 6;
-    const max = limits?.max ?? 32;
-    const current = Math.min(max, Math.max(min, Math.round(wanted)));
+    const limits = client.getLimits();
+    const current = Math.min(limits.max, Math.max(limits.min, Math.round(wanted)));
 
     await client.writeRegister(CONTROL.charging_current, current);
     control.set(current);
@@ -127,21 +133,22 @@ export const SCENE_ACTIONS = {
   },
 
   /**
-   * Release the current and stop the heartbeat.
+   * Release the setpoint: write the FLOOR the device allows, not zero.
    *
-   * What is written is the FAILSAFE current, not zero: the wallbox has no "no
-   * charging" register, and a current of zero is a value it refuses. Handing
-   * control back to the failsafe value is what "released" means here, and the
-   * heartbeat stopping is what lets it take effect.
+   * The wallbox has no "no charging" register, and a current of zero is a value
+   * it refuses. `evse_min_current` (1102) is the smallest value the installer
+   * left enabled on this device, so handing control back means allowing that —
+   * and since 1102 is only ever READ, releasing changes no configuration.
+   *
+   * The heartbeat stops with it. That is what makes the value stick: while it
+   * runs, this integration is the master and the setpoint holds; once it stops,
+   * the wallbox is free to do what it was configured to do.
    */
   async release_charging_current({ client, control }) {
     if (!client) throw new Error('Keine Verbindung zur Wallbox');
-    const failsafe = control.failsafeCurrent();
-    await client.writeRegister(CONTROL.charging_current, failsafe);
+    const limits = client.getLimits();
+    await client.writeRegister(CONTROL.charging_current, limits.min);
     control.clear();
-    return { current: failsafe };
+    return { current: limits.min };
   },
 };
-
-/** The register blocks a scene action may need, re-exported so a test can name them. */
-export const REGISTERS = { CONTROL, FAILSAFE };

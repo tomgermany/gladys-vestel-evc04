@@ -5,7 +5,7 @@
 // WHY THIS LAYER EXISTS AT ALL
 // `src/vestel/modbus.js` reads registers and writes them. It has no idea what a
 // chargepoint is. This file is where "register 1000" becomes "chargepoint_state"
-// and where a write of 16 into 5004 becomes "the charging current is 16 A".
+// and where a write of 13 into 5004 becomes "the charging current is 13 A".
 // Keeping that translation in one place is what lets registers.js change without
 // the widget or a scene noticing.
 //
@@ -29,8 +29,10 @@ import {
   CHARGEPOINT_STATE,
   CABLE_STATE,
   EQUIPMENT_STATE,
-  LIMITS,
+  READ_ONLY,
   STATE,
+  DEFAULT_MIN_CURRENT,
+  DEFAULT_MAX_CURRENT,
 } from './registers.js';
 
 export class Evc04Client extends VestelModbus {
@@ -86,21 +88,42 @@ export class Evc04Client extends VestelModbus {
   /**
    * What the EVSE and the attached cable will accept, in amperes.
    *
-   * Three readings decide the answer and the smallest wins: a cable may be
-   * thinner than the EVSE, and a vehicle may ask for less than either. They come
-   * from the device rather than from an assumption, because assuming 32 A and
-   * being wrong is how a fuse blows.
+   * READ, NEVER WRITTEN. These are the figures the installer set on the wallbox,
+   * and this integration respects them: the question they answer is "how much may
+   * I ask for", not "how much do I want".
+   *
+   * The smallest of them wins. A cable may be thinner than the EVSE, and a
+   * vehicle may ask for less than either. The device's own maximum (`1104`) is the
+   * one that matters for a setpoint: a scene asking for 16 A on a device set to
+   * 13 A is not an error the wallbox reports, it simply charges at 13 — and the
+   * clamp below is what keeps Gladys from claiming otherwise.
+   *
+   * `session_max_current` is deliberately NOT part of the ceiling: it describes
+   * the session that is running, not what may be asked for, and using it would
+   * lower the limit with every charge.
    */
   async readLimits() {
-    const [session, min, evseMax, cableMax] = await Promise.all([
-      this.readOptionalUint16(LIMITS.session_max_current).catch(() => null),
-      this.readOptionalUint16(LIMITS.evse_min_current).catch(() => null),
-      this.readOptionalUint16(LIMITS.evse_max_current).catch(() => null),
-      this.readOptionalUint16(LIMITS.cable_max_current).catch(() => null),
+    const [min, evseMax, cableMax] = await Promise.all([
+      this.readOptionalUint16(READ_ONLY.evse_min_current).catch(() => null),
+      this.readOptionalUint16(READ_ONLY.evse_max_current).catch(() => null),
+      this.readOptionalUint16(READ_ONLY.cable_max_current).catch(() => null),
     ]);
-    const floor = min ?? 6;
-    const ceiling = Math.min(evseMax ?? 32, cableMax ?? 32, session ?? 32);
-    return { min: floor, max: Math.max(floor, ceiling) };
+    const floor = min ?? DEFAULT_MIN_CURRENT;
+    const ceiling = Math.min(evseMax ?? DEFAULT_MAX_CURRENT, cableMax ?? DEFAULT_MAX_CURRENT);
+    this.limits = { min: floor, max: Math.max(floor, ceiling) };
+    return this.limits;
+  }
+
+  /**
+   * The limits last read, or the fallbacks when none were.
+   *
+   * The fallbacks are only for a device that does not answer those registers at
+   * all. They are deliberately the smallest figures that make sense for a home
+   * charge point, not a generous guess: a ceiling that is too high is a value the
+   * wallbox silently ignores, and the user reads a number that is not true.
+   */
+  getLimits() {
+    return this.limits ?? { min: DEFAULT_MIN_CURRENT, max: DEFAULT_MAX_CURRENT };
   }
 
   /** The chargepoint state as a word, for the connection test and the log. */
