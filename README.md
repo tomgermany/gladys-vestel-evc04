@@ -5,7 +5,7 @@
 
 ## Warum Modbus und nicht OCPP
 
-Die Wallbox bietet drei Wege: die Hersteller-Cloud, OCPP 1.6, und Modbus TCP.
+ Die Wallbox bietet drei Wege: die Hersteller-Cloud, OCPP 1.6, und Modbus TCP.
 
 OCPP ist ein Protokoll zwischen einer Ladestation und einem **Backend**. Im Heimgebrauch hie\u00dfe das,
 selbst einen Server zu betreiben, der Vertr\u00e4ge, Authentifizierung und Lastmanagement f\u00fchrt \u2014 die
