@@ -80,10 +80,10 @@
       "type": "section",
       "label": { "de": "Steuerung", "en": "Control", "fr": "Commande", "es": "Control" },
       "description": {
-        "de": "Der Ladestrom wird in Register 5004 gesetzt. Solange ein Sollwert gesetzt ist, hält die Integration den Alive-Register (6000) in der halben Failsafe-Zeit. Ohne das fällt die Wallbox auf den Failsafe-Strom zurück.",
-        "en": "The charging current is set in register 5004. While a setpoint is active, the integration keeps the alive register (6000) answered within half the failsafe timeout. Without it the wallbox falls back to the failsafe current.",
-        "fr": "Le courant de charge se règle dans le registre 5004. Tant qu'une consigne est active, l'intégration entretient le registre alive (6000). Sans cela, la borne retombe sur le courant de secours.",
-        "es": "La corriente de carga se ajusta en el registro 5004. Mientras hay una consigna activa, la integración mantiene el registro alive (6000). Sin ello, el cargador vuelve a la corriente de seguridad."
+        "de": "Der Ladestrom wird in Register 5004 gesetzt, begrenzt auf das, was die Wallbox selbst erlaubt. Solange ein Sollwert gilt, hält die Integration den Alive-Register (6000). Die Grenzen selbst werden nur gelesen, niemals gesetzt: was du in der Wallbox einträgst, gilt.",
+        "en": "The charging current is set in register 5004, clamped to what the wallbox itself allows. While a setpoint holds, the integration keeps the alive register (6000) answered. The limits themselves are read, never written: what you enter on the wallbox is what applies.",
+        "fr": "Le courant de charge se règle dans le registre 5004, limité à ce que la borne autorise. Tant qu'une consigne tient, l'intégration entretient le registre alive (6000). Les limites elles-mêmes sont lues, jamais écrites : ce que vous saisissez sur la borne s'applique.",
+        "es": "La corriente de carga se ajusta en el registro 5004, limitada a lo que el cargador permite. Mientras hay una consigna, la integración mantiene el registro alive (6000). Los límites se leen, nunca se escriben: lo que introduzcas en el cargador es lo que vale."
       }
     },
     {
@@ -91,12 +91,17 @@
       "type": "number",
       "required": false,
       "default": 6,
-      "label": { "de": "Failsafe-Strom in A", "en": "Failsafe current in A", "fr": "Courant de secours en A", "es": "Corriente de seguridad en A" },
+      "label": {
+        "de": "Failsafe-Strom in A (nur für den Herzschlag)",
+        "en": "Failsafe current in A (heartbeat only)",
+        "fr": "Courant de secours en A (pulsation uniquement)",
+        "es": "Corriente de seguridad en A (solo latido)"
+      },
       "description": {
-        "de": "Der Strom, auf den die Wallbox zurückfällt, wenn der Alive-Register nicht mehr bedient wird. Sinnvoll ist der kleinste Wert, den dein Fahrzeug akzeptiert.",
-        "en": "The current the wallbox falls back to when the alive register stops being answered. The smallest value your vehicle accepts is the safe choice.",
-        "fr": "Le courant sur lequel la borne retombe quand le registre alive n'est plus entretenu. La plus petite valeur acceptée par votre véhicule est le choix sûr.",
-        "es": "La corriente a la que vuelve el cargador cuando el registro alive deja de atenderse. El valor más pequeño que acepte tu vehículo es lo prudente."
+        "de": "Wird NICHT auf die Wallbox geschrieben. Er bestimmt nur, welcher Ladestrom gilt, nachdem die Steuerung freigegeben wurde — sinnvoll ist der kleinste Wert, den dein Fahrzeug akzeptiert.",
+        "en": "This is NOT written to the wallbox. It only decides which charging current applies after a setpoint is released — the smallest value your vehicle accepts is the safe choice.",
+        "fr": "N'est PAS écrit sur la borne. Il détermine seulement le courant appliqué après la libération d'une consigne — la plus petite valeur acceptée par votre véhicule est le choix sûr.",
+        "es": "NO se escribe en el cargador. Solo decide qué corriente se aplica tras liberar una consigna: el valor más pequeño que acepte tu vehículo es lo prudente."
       }
     },
     {
@@ -104,12 +109,17 @@
       "type": "number",
       "required": false,
       "default": 20,
-      "label": { "de": "Failsafe-Zeit in Sekunden", "en": "Failsafe time in seconds", "fr": "Temps de secours en secondes", "es": "Tiempo de seguridad en segundos" },
+      "label": {
+        "de": "Herzschlag-Frist in Sekunden",
+        "en": "Heartbeat deadline in seconds",
+        "fr": "Délai de pulsation en secondes",
+        "es": "Plazo del latido en segundos"
+      },
       "description": {
-        "de": "Frist, nach der die Wallbox auf den Failsafe-Strom wechselt. Der Alive-Register wird in der halben Zeit bedient, mindestens alle 3 Sekunden.",
-        "en": "Deadline after which the wallbox switches to the failsafe current. The alive register is answered within half of it, at least every 3 seconds.",
-        "fr": "Délai après lequel la borne passe au courant de secours. Le registre alive est entretenu dans la moitié, au minimum toutes les 3 secondes.",
-        "es": "Plazo tras el cual el cargador cambia a la corriente de seguridad. El registro alive se atiende en la mitad, como mínimo cada 3 segundos."
+        "de": "Wird NICHT auf die Wallbox geschrieben. Sie bestimmt nur, wie oft der Herzschlag (Register 6000) bedient wird: die halbe Frist, mindestens alle 3 Sekunden.",
+        "en": "This is NOT written to the wallbox. It only decides how often the heartbeat (register 6000) is answered: half of it, never less than every 3 seconds.",
+        "fr": "N'est PAS écrit sur la borne. Il détermine seulement la fréquence d'entretien du registre alive (6000) : la moitié, jamais moins de 3 secondes.",
+        "es": "NO se escribe en el cargador. Solo decide cada cuánto se atiende el registro alive (6000): la mitad, nunca menos de 3 segundos."
       }
     }
   ],
@@ -118,10 +128,10 @@
       "key": "test_connection",
       "label": { "de": "Verbindung prüfen", "en": "Test the connection", "fr": "Tester la connexion", "es": "Comprobar la conexión" },
       "description": {
-        "de": "Liest die Wallbox jetzt und sagt, was sie geantwortet hat: Seriennummer, Modell, Firmware und Ladezustand.",
-        "en": "Reads the wallbox now and reports what it answered: serial number, model, firmware and charging state.",
-        "fr": "Lit la borne maintenant et indique ce qu'elle a répondu : numéro de série, modèle, firmware et état.",
-        "es": "Lee el cargador ahora e indica lo que ha respondido: número de serie, modelo, firmware y estado."
+        "de": "Liest die Wallbox jetzt und sagt, was sie geantwortet hat: Seriennummer, Modell, Firmware, Zustand und der Ladestrom-Bereich, den das Gerät erlaubt.",
+        "en": "Reads the wallbox now and reports what it answered: serial number, model, firmware, state and the charging current range the device allows.",
+        "fr": "Lit la borne maintenant et indique ce qu'elle a répondu : numéro de série, modèle, firmware, état et la plage de courant autorisée.",
+        "es": "Lee el cargador ahora e indica lo que ha respondido: número de serie, modelo, firmware, estado y el rango de corriente permitido."
       },
       "timeout_seconds": 30
     }
@@ -137,22 +147,7 @@
         "es": "El estado de carga en palabras, la potencia actual y la corriente en directo."
       },
       "icon": "zap",
-      "action_timeout_seconds": 15,
-      "settings": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "de": "Wallbox", "en": "Wallbox", "fr": "Borne", "es": "Cargador" },
-          "description": {
-            "de": "Welche Wallbox diese Kachel zeigt. Leer lassen für die erste.",
-            "en": "Which wallbox this tile shows. Leave empty for the first one.",
-            "fr": "Quelle borne cette tuile affiche. Vide pour la première.",
-            "es": "Qué cargador muestra esta tarjeta. Vacío para el primero."
-          },
-          "required": false
-        }
-      ]
+      "action_timeout_seconds": 15
     }
   ],
   "scene_triggers": [
@@ -192,10 +187,10 @@
       "key": "set_charging_current",
       "label": { "de": "Ladestrom setzen", "en": "Set the charging current", "fr": "Régler le courant de charge", "es": "Ajustar la corriente de carga" },
       "description": {
-        "de": "Setzt den Ladestrom in Ampere. Solange ein Wert gesetzt ist, hält die Integration den Alive-Register.",
-        "en": "Sets the charging current in amperes. While a value is set, the integration keeps the alive register answered.",
-        "fr": "Règle le courant de charge en ampères. Tant qu'une valeur est fixée, l'intégration entretient le registre alive.",
-        "es": "Ajusta la corriente de carga en amperios. Mientras hay un valor fijado, la integración mantiene el registro alive."
+        "de": "Setzt den Ladestrom in Ampere, begrenzt auf das, was die Wallbox und das Kabel erlauben.",
+        "en": "Sets the charging current in amperes, clamped to what the wallbox and the cable allow.",
+        "fr": "Règle le courant de charge en ampères, limité à ce que la borne et le câble autorisent.",
+        "es": "Ajusta la corriente de carga en amperios, limitada a lo que permiten el cargador y el cable."
       },
       "timeout_seconds": 30,
       "fields": [
@@ -209,14 +204,14 @@
       "key": "release_charging_current",
       "label": { "de": "Ladestrom freigeben", "en": "Release the charging current", "fr": "Libérer le courant de charge", "es": "Liberar la corriente de carga" },
       "description": {
-        "de": "Beendet die Steuerung und stellt den Failsafe-Strom wieder her. Der Alive-Register wird nicht mehr bedient.",
-        "en": "Ends the control and restores the failsafe current. The alive register stops being answered.",
-        "fr": "Met fin à la commande et rétablit le courant de secours. Le registre alive n'est plus entretenu.",
-        "es": "Termina el control y restablece la corriente de seguridad. El registro alive deja de atenderse."
+        "de": "Beendet die Steuerung. Der Herzschlag wird nicht mehr bedient, die Wallbox lädt wieder nach ihrer eigenen Einstellung.",
+        "en": "Ends the control. The heartbeat stops being answered and the wallbox charges according to its own setting again.",
+        "fr": "Met fin à la commande. Le registre alive n'est plus entretenu et la borne recharge selon son propre réglage.",
+        "es": "Termina el control. El registro alive deja de atenderse y el cargador vuelve a cargar según su propio ajuste."
       },
       "timeout_seconds": 30,
       "outputs": [
-        { "key": "current", "type": "number", "label": { "de": "Failsafe-Strom in A", "en": "Failsafe current in A", "fr": "Courant de secours en A", "es": "Corriente de seguridad en A" } }
+        { "key": "current", "type": "number", "label": { "de": "Freigegebener Strom in A", "en": "Released current in A", "fr": "Courant libéré en A", "es": "Corriente liberada en A" } }
       ]
     }
   ]
