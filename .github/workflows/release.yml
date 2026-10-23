@@ -43,12 +43,3 @@ jobs:
           git tag "v${{ steps.release.outputs.version }}"
           git push
           git push --tags
-
-  build:
-    needs: release
-    uses: ./.github/workflows/build.yml
-    with:
-      tag: ${{ needs.release.outputs.version }}
-    permissions:
-      contents: read
-      packages: write
