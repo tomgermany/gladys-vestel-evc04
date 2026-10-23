@@ -1,13 +1,19 @@
-   name: Build
+name: Build
 
 on:
-  push:
-    branches: ['**']
   workflow_dispatch:
     inputs:
       tag:
         description: Image-Tag (Standard: Version aus dem Manifest)
         required: false
+        type: string
+  push:
+    tags: ['v*.*.*']
+  workflow_call:
+    inputs:
+      tag:
+        description: Image-Tag, den release.yml gerade erzeugt hat
+        required: true
         type: string
 
 permissions:
@@ -27,22 +33,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Image-Referenz bestimmen
+      - name: Image-Tag bestimmen
         id: ref
         run: |
           manifest_tag="$(node -p 'require("./gladys-assistant-integration.json").docker_image.split(":").pop()')"
-          if [ "${{ github.event_name }}" = "push" ] && [ -n "${GITHUB_REF_NAME}" ]; then
+          if [ -n "${{ inputs.tag }}" ]; then
+            tag="${{ inputs.tag }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             tag="${GITHUB_REF_NAME#v}"
           else
-            tag="${{ inputs.tag }}"
+            tag="$manifest_tag"
           fi
-          if [ -z "$tag" ]; then tag="$manifest_tag"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Baue ghcr.io/${{ github.repository }}:$tag"
 
       - uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
-          push: false
+          platforms: linux/amd64,linux/arm64
+          push: true
           tags: ghcr.io/${{ github.repository }}:${{ steps.ref.outputs.tag }}
