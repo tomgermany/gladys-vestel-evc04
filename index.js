@@ -7,18 +7,29 @@
 // lives in src/:
 //   src/vestel/transport.js  the raw TCP socket
 //   src/vestel/modbus.js     the Modbus protocol
-//   src/vestel/registers.js  the register map, and the read/write rule
+//   src/vestel/registers.js  the register map, the read/write rule, and KEY
 //   src/vestel/client.js     registers as named readings
 //   src/devices/wallbox.js   the wallbox as a Gladys device
 //   src/widgets.js           the dashboard card
 //   src/scenes.js            the triggers and the actions
 //   src/alive.js             the heartbeat for register 6000
+//   src/labels.js            the runtime texts
 //   src/config.js            defaults and normalisation
 //
 // THE ONE ORDERING RULE
 // Every handler is registered BEFORE `gladys.connect()`. Gladys may send a message
 // the moment the connection opens, and a handler registered later would simply
 // miss it.
+//
+// WHERE KEY COMES FROM, AND WHY THAT IS WORTH A SENTENCE
+// The feature keys live in src/vestel/registers.js, next to the register map they
+// describe. An earlier version of this file imported them from src/labels.js,
+// where they never existed: `npm run lint` does not check whether a named export
+// really exists in the module it is imported from, so the CI stayed green and the
+// container died on its first start with
+//   SyntaxError: does not provide an export named 'KEY'
+// A lint pass is not a load test. This file is the only place that would have
+// caught it, and only by running.
 //
 // ONE CONNECTION, AND THE HEARTBEAT RUNS ON IT
 // The EVC04 allows exactly ONE Modbus master at a time, so this process owns the
@@ -38,6 +49,7 @@ import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 
 import { normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
+import { KEY } from './src/vestel/registers.js';
 import {
   buildDevice,
   decorate,
@@ -49,7 +61,7 @@ import {
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { CHARGER_WIDGET, buildChargerContent, chargerAction } from './src/widgets.js';
 import { AliveControl } from './src/alive.js';
-import { stateSentence, t, KEY } from './src/labels.js';
+import { stateSentence, t } from './src/labels.js';
 
 const gladys = new GladysIntegration();
 
