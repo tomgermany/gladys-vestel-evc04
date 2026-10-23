@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.2.0] - 2026-10-23
+
 Alle nennenswerten Änderungen dieser Integration.
 
 ## [0.1.1] - 2026-10-23
