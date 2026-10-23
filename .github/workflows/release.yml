@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Welcher Teil der Version erhöht wird
+        required: true
+        type: choice
+        options: [patch, minor, major]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Git einrichten
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Version anheben (package.json, Manifest, Changelog)
+        id: release
+        run: node .github/scripts/release.mjs ${{ inputs.bump }}
+
+      - name: Committen, taggen, pushen
+        run: |
+          git add package.json gladys-assistant-integration.json CHANGELOG.md
+          git commit -m "chore(release): v${{ steps.release.outputs.version }}"
+          git tag "v${{ steps.release.outputs.version }}"
+          git push
+          git push --tags
+
+  build:
+    needs: release
+    uses: ./.github/workflows/build.yml
+    with:
+      tag: ${{ needs.release.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
