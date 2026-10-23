@@ -69,7 +69,8 @@ jobs:
         run: |
           gh release create "v${{ steps.release.outputs.version }}" \
             --title "v${{ steps.release.outputs.version }}" \
-            --notes-file "${{ steps.release.outputs.notes_file }}"
+            --notes-file "${{ steps.release.outputs.notes_file }}" \
+            --latest
 
   build:
     needs: release
