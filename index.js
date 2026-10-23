@@ -7,7 +7,7 @@
 // lives in src/:
 //   src/vestel/transport.js  the raw TCP socket
 //   src/vestel/modbus.js     the Modbus protocol
-//   src/vestel/registers.js  the register map of this device
+//   src/vestel/registers.js  the register map, and the read/write rule
 //   src/vestel/client.js     registers as named readings
 //   src/devices/wallbox.js   the wallbox as a Gladys device
 //   src/widgets.js           the dashboard card
@@ -16,9 +16,9 @@
 //   src/config.js            defaults and normalisation
 //
 // THE ONE ORDERING RULE
-// Every handler is registered BEFORE `gladys.connect()`. Gladys may send a
-// message the moment the connection opens, and a handler registered later would
-// simply miss it.
+// Every handler is registered BEFORE `gladys.connect()`. Gladys may send a message
+// the moment the connection opens, and a handler registered later would simply
+// miss it.
 //
 // ONE CONNECTION, AND THE HEARTBEAT RUNS ON IT
 // The EVC04 allows exactly ONE Modbus master at a time, so this process owns the
@@ -28,9 +28,8 @@
 // heartbeat would be the one that got refused at exactly the wrong moment.
 //
 // WHY THE HEARTBEAT STARTS WITH A CURRENT AND STOPS WHEN RELEASED
-// A beat that runs all the time would hold the wallbox under external control
-// even when nothing is being controlled, and the failsafe value would never
-// apply. See src/alive.js for what that costs.
+// A beat that runs all the time would hold the wallbox under external control even
+// when nothing is being controlled. See src/alive.js for what that costs.
 //
 // SDK: @gladysassistant/integration-sdk ^0.15 (Gladys >= 5.1.0).
 // -----------------------------------------------------------------------------
@@ -39,7 +38,6 @@ import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 
 import { normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
-import { CONTROL } from './src/vestel/registers.js';
 import {
   buildDevice,
   decorate,
@@ -94,13 +92,12 @@ async function readConfig() {
  * Connect to the wallbox, once at a time.
  *
  * THE GATE, AND WHY IT IS HERE AND NOT IN `establish()`
- * `connected` and `onConfigUpdated` both connect, and on a restart both fire
- * within seconds of each other. A second caller must not start a competing
- * connection — the device allows one master, so a second attempt would not fail
- * cleanly, it would take the slot from the first. `finally` clears the gate
- * rather than a plain assignment: a gate left set after a throw would make every
- * later caller wait on a promise that has already settled, and the integration
- * would never connect again.
+ * `connected` and `onConfigUpdated` both connect, and on a restart both fire within
+ * seconds of each other. A second caller must not start a competing connection —
+ * the device allows one master, so a second attempt would not fail cleanly, it
+ * would take the slot from the first. `finally` clears the gate rather than a plain
+ * assignment: a gate left set after a throw would make every later caller wait on a
+ * promise that has already settled, and the integration would never connect again.
  */
 async function connectWallbox() {
   if (connecting) return connecting;
@@ -145,17 +142,20 @@ async function establish() {
       name: info.chargepointId || info.serial || 'Wallbox',
     };
 
+    // The limits are read once, here: they are the device's own figures and they
+    // change when somebody changes them on the device, not on every poll.
+    const limits = await client.readLimits().catch(() => null);
     snapshot = decorate(await client.readAll());
     logger.info(
       `Wallbox ready: ${device.model} (${device.serial}), firmware ${info.firmware}, ` +
-        `${Object.keys(snapshot).length} readings, state ${snapshot.chargepoint_state}`,
+        `${Object.keys(snapshot).length} readings, state ${snapshot.chargepoint_state}, ` +
+        `charging current ${limits ? `${limits.min}-${limits.max} A` : 'unknown'}`,
     );
     await gladys.setConnectionStatus(true);
     return true;
   } catch (err) {
-    // A failed attempt must not leave a half-open socket behind: the device
-    // allows one master, and a stranded socket would keep the next attempt from
-    // taking it.
+    // A failed attempt must not leave a half-open socket behind: the device allows
+    // one master, and a stranded socket would keep the next attempt from taking it.
     client?.transport?.reset();
     client = null;
     logger.error(`Wallbox connection failed (${config.host}): ${err.message}`);
@@ -193,8 +193,8 @@ async function refresh() {
   await publishAll(gladys, device, snapshot);
   await fireChargingEvents();
   // A card showing a charge is worth redrawing when the charge changes: the
-  // sentence on it says something else the moment energy starts or stops
-  // flowing, and waiting for the next dashboard refresh would show the old one.
+  // sentence on it says something else the moment energy starts or stops flowing,
+  // and waiting for the next dashboard refresh would show the old one.
   if (flank) gladys.requestWidgetRefresh(CHARGER_WIDGET);
 }
 
@@ -203,8 +203,8 @@ async function refresh() {
  *
  * The comparison lives in src/scenes.js, next to the comment that explains why a
  * trigger cannot carry a threshold. Here is only the part that needs the running
- * process: remembering the last state, publishing what came back, and telling
- * the card that its sentence has changed.
+ * process: remembering the last state, publishing what came back, and telling the
+ * card that its sentence has changed.
  */
 async function fireChargingEvents() {
   const { events, side } = chargingEvents({ snapshot, previous: lastCharging });
@@ -241,10 +241,11 @@ gladys.onPoll(async (polled) => {
 /**
  * Manifest action "Test the connection".
  *
- * It answers in words, and it names the one thing that cannot be guessed: the
- * address base. If the serial number comes back as noise, the register map of
- * this device is being read with the wrong interpretation, and the user should
- * hear that here rather than wonder why every value looks wrong.
+ * It answers in words, and it names the two things that cannot be guessed: the
+ * address base, and the current range the device reports. If the serial number
+ * comes back as noise, the register map is being read with the wrong
+ * interpretation, and the user should hear that here rather than wonder why every
+ * value looks wrong.
  */
 gladys.onAction('test_connection', async () => {
   await readConfig().catch(() => {});
@@ -258,35 +259,37 @@ gladys.onAction('test_connection', async () => {
   }
   try {
     const info = await client.connect();
+    const limits = await client.readLimits().catch(() => null);
     const readings = decorate(await client.readAll());
     snapshot = readings;
     const looksLikeText = /^[\x20-\x7e]*$/.test(info.serial ?? '');
     const hint = looksLikeText
       ? ''
       : ' Die Seriennummer ist kein lesbarer Text — vermutlich stimmt ADDRESS_BASE in src/vestel/registers.js nicht.';
+    const range = limits ? `${limits.min}-${limits.max} A` : 'unbekannt';
     return {
       de:
         `Antwort: ${info.brand ?? '?'} ${info.model ?? '?'}, Seriennummer ${info.serial ?? '?'}, ` +
         `Firmware ${info.firmware ?? '?'}. Zustand ${readings.chargepoint_state ?? '?'}, ` +
-        `${Object.keys(readings).length} Werte.${hint}`,
+        `${Object.keys(readings).length} Werte, Ladestrom-Bereich ${range}.${hint}`,
       en:
         `Answered: ${info.brand ?? '?'} ${info.model ?? '?'}, serial ${info.serial ?? '?'}, ` +
         `firmware ${info.firmware ?? '?'}. State ${readings.chargepoint_state ?? '?'}, ` +
-        `${Object.keys(readings).length} readings.` +
+        `${Object.keys(readings).length} readings, charging current range ${range}.` +
         (looksLikeText
           ? ''
           : ' The serial number is not readable text — ADDRESS_BASE in src/vestel/registers.js is probably wrong.'),
       fr:
         `Réponse : ${info.brand ?? '?'} ${info.model ?? '?'}, série ${info.serial ?? '?'}, ` +
         `firmware ${info.firmware ?? '?'}. État ${readings.chargepoint_state ?? '?'}, ` +
-        `${Object.keys(readings).length} valeurs.` +
+        `${Object.keys(readings).length} valeurs, plage de courant ${range}.` +
         (looksLikeText
           ? ''
           : ' Le numéro de série n’est pas du texte lisible — ADDRESS_BASE dans src/vestel/registers.js est probablement faux.'),
       es:
         `Respuesta: ${info.brand ?? '?'} ${info.model ?? '?'}, serie ${info.serial ?? '?'}, ` +
         `firmware ${info.firmware ?? '?'}. Estado ${readings.chargepoint_state ?? '?'}, ` +
-        `${Object.keys(readings).length} valores.` +
+        `${Object.keys(readings).length} valores, rango de corriente ${range}.` +
         (looksLikeText
           ? ''
           : ' El número de serie no es texto legible: probablemente ADDRESS_BASE en src/vestel/registers.js es incorrecto.'),
@@ -314,11 +317,16 @@ gladys.onSetValue(async (_device, feature, value) => {
   }
   const current = Math.round(Number(value));
   if (!Number.isFinite(current)) throw new Error('Ladestrom muss eine Zahl sein');
-  await client.writeRegister(CONTROL.charging_current, current);
-  control.set(current);
-  await gladys.publishState(feature.external_id, current);
+  // The same path a scene and a button take, so the clamp against the device's
+  // own limits cannot be forgotten here.
+  const applied = await SCENE_ACTIONS.set_charging_current({
+    client,
+    fields: { current },
+    control,
+  });
+  await gladys.publishState(feature.external_id, applied.current);
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
-  return current;
+  return applied.current;
 });
 
 // --- Scene actions -----------------------------------------------------------
@@ -337,12 +345,12 @@ gladys.onWidgetGet(CHARGER_WIDGET, async () => {
     device,
     ids: {
       power: ids?.feature(KEY.POWER) ?? null,
-      session_energy: ids?.feature('session_energy') ?? null,
+      session_energy: ids?.feature(KEY.SESSION_ENERGY) ?? null,
       meter_reading: ids?.feature(KEY.METER_READING) ?? null,
       charging_current: ids?.feature(KEY.CHARGING_CURRENT) ?? null,
     },
     // The NUMBER the tile is labelled with, or null when nothing is under our
-    // control and the wallbox is using its own failsafe value.
+    // control and the wallbox is using its own setting.
     controlled: control.current,
     t,
     sentence: (state) => stateSentence(state),
@@ -350,15 +358,26 @@ gladys.onWidgetGet(CHARGER_WIDGET, async () => {
 });
 
 gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
-  const intent = chargerAction({ actionKey, params, state: snapshot, t });
-  // The card decides what a tap means; this is where it happens. The current is
-  // always SET — the wallbox has no "no charging" register, and handing control
-  // back is what the scene action does.
-  await SCENE_ACTIONS.set_charging_current({
-    client,
-    fields: { current: intent.current },
-    control,
+  const intent = chargerAction({
+    actionKey,
+    params,
+    state: snapshot,
+    controlled: control.current,
+    limits: client?.getLimits(),
+    t,
   });
+  // The card decides what a tap means; this is where it happens. Setting and
+  // releasing both go through the scene actions, so a button and a scene do
+  // exactly the same thing to the wallbox.
+  if (intent.release) {
+    await SCENE_ACTIONS.release_charging_current({ client, control });
+  } else {
+    await SCENE_ACTIONS.set_charging_current({
+      client,
+      fields: { current: intent.current },
+      control,
+    });
+  }
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
   return intent.toast;
 });
@@ -388,10 +407,10 @@ gladys.on('connected', async () => {
 });
 
 // --- Shutdown ----------------------------------------------------------------
-// The container is stopped on every restart and update. The heartbeat stops
-// FIRST: a beat that outlives the shutdown would keep the wallbox under external
-// control while nothing is there to release it, and the failsafe value could
-// never take over.
+// The container is stopped on every restart and update. The heartbeat stops FIRST:
+// a beat that outlives the shutdown would keep the wallbox under external control
+// while nothing is there to release it, and the failsafe value could never take
+// over.
 gladys.handleShutdown(async (signal) => {
   logger.info(`Received ${signal} -> graceful shutdown`);
   control.stop();

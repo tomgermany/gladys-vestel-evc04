@@ -2,14 +2,13 @@
 // The register map of the Vestel EVC04, as ONE object.
 //
 // WHY EVERY ADDRESS LIVES HERE AND NOWHERE ELSE
-// Two kinds of mistake cost days on a project like this: an address that is off
-// by one, and an address that is right on paper and wrong on the wire. Keeping
-// them together means a correction is a one-line edit in one file instead of a
-// hunt through the code.
+// Two kinds of mistake cost days on a project like this: an address that is off by
+// one, and an address that is right on paper and wrong on the wire. Keeping them
+// together means a correction is a one-line edit in one file.
 //
 // THE ADDRESS QUESTION, AND HOW TO SETTLE IT AT THE DEVICE
-// The manufacturer's table prints ranges like "Serial Number [100,124]" and
-// single addresses like `1008`. Two readings are possible:
+// The manufacturer's table prints ranges like "Serial Number [100,124]" and single
+// addresses like `1008`. Two readings are possible:
 //
 //   A)  the brackets hold BYTE offsets, so a range of 25 bytes is 13 registers
 //       and the serial number starts at register 50. This is the reading used
@@ -17,9 +16,22 @@
 //   B)  the numbers are already REGISTERS, so the serial number starts at 100.
 //
 // The device answers this in one attempt: the connection test reads the serial
-// number with the configured base and reports what came back. Readable text
-// means the base is right; `Modbus exception 2` (illegal data address) means it
-// is not, and `ADDRESS_BASE` below is the one line to change.
+// number with the configured base and reports what came back. Readable text means
+// the base is right; `Modbus exception 2` (illegal data address) means it is not,
+// and `ADDRESS_BASE` below is the one line to change.
+//
+// WHAT MAY BE WRITTEN, AND WHAT MAY ONLY BE READ
+// Exactly two registers are written, and both are charging control rather than
+// configuration:
+//
+//   CONTROL.charging_current (5004)   the setpoint
+//   FAILSAFE.alive (6000)             the heartbeat that keeps the setpoint
+//
+// Everything else is READ. The limit registers are the installer's figures and
+// this integration respects them; the failsafe registers are read back but never
+// set. What the rule buys is the answer to a plain question: what can someone who
+// does not know this device do from Gladys? They can change how much current
+// flows, which is the feature. They cannot reconfigure the wallbox.
 //
 // TWO CHARACTERS PER REGISTER, SPACE PADDED
 // A string block holds two ASCII characters per 16-bit register, so a 25-byte
@@ -27,16 +39,15 @@
 //
 // NO SCALE FACTORS ON THIS MAP
 // The specification states every unit outright — mA, V, W, 0.1 kWh, Wh, A — so
-// nothing here needs a factor register. That is the main difference from a
-// SunSpec device, and the reason this map is so much shorter than the
-// WattWächter's.
+// nothing here needs a factor register. That is the main difference from a SunSpec
+// device, and the reason this map is much shorter than the WattWächter's.
 // -----------------------------------------------------------------------------
 
 /**
  * Which reading of the address table applies.
  *
- *   'byte-ranges'  bracket ranges are byte offsets, divided by two for a
- *                  register. The default, and what the table looks like.
+ *   'byte-ranges'  bracket ranges are byte offsets, divided by two for a register.
+ *                  The default, and what the table looks like.
  *   'registers'    every printed number is already a register address.
  *
  * Only the string blocks in IDENTITY are affected: the measurement and control
@@ -49,8 +60,8 @@ export const CHARS_PER_REGISTER = 2;
 
 /**
  * A printed byte offset as a register address, under the current reading.
- * The string block counts are derived from the same ranges, so a change of
- * reading cannot leave a count that disagrees with its address.
+ * The string block counts are derived from the same ranges, so a change of reading
+ * cannot leave a count that disagrees with its address.
  */
 export function asRegister(byteOffset) {
   return ADDRESS_BASE === 'byte-ranges' ? Math.floor(byteOffset / CHARS_PER_REGISTER) : byteOffset;
@@ -73,9 +84,9 @@ const block = (from, to) => ({
 /**
  * The identity block: strings, read once after connecting.
  *
- * The serial number is the one that matters: it is the device's stable identity
- * in Gladys, so a wallbox that gets a new IP address from the router keeps its
- * history and its scenes.
+ * The serial number is the one that matters: it is the device's stable identity in
+ * Gladys, so a wallbox that gets a new IP address from the router keeps its history
+ * and its scenes.
  */
 export const IDENTITY = {
   serial: block(100, 124),
@@ -87,8 +98,8 @@ export const IDENTITY = {
 
 /**
  * Day and time as the device keeps them, packed as `yymmdd` and `hhmmss` into a
- * uint32 each. Read for the device clock, not for scheduling: a schedule belongs
- * in Gladys, not inside a wallbox.
+ * uint32 each. Read for the device clock, not for scheduling: a schedule belongs in
+ * Gladys, not inside a wallbox.
  */
 export const CLOCK = {
   date: { address: 290, count: 2 },
@@ -101,8 +112,8 @@ export const PHASES = 404;
 /**
  * The state registers, read on every poll.
  *
- * `chargepoint` and `charging` are the two that matter most: the first is what
- * the wallbox is doing, the second is whether energy is flowing right now. The
+ * `chargepoint` and `charging` are the two that matter most: the first is what the
+ * wallbox is doing, the second is whether energy is flowing right now. The
  * transition of the second is what the two scene triggers fire on.
  */
 export const STATE = {
@@ -110,8 +121,8 @@ export const STATE = {
   charging: 1001,
   equipment: 1002,
   cable: 1004,
-  // The fault code was widened from uint16 to uint32 in specification v1.3,
-  // which is why it occupies two registers here.
+  // The fault code was widened from uint16 to uint32 in specification v1.3, which
+  // is why it occupies two registers here.
   fault: { address: 1006, count: 2 },
 };
 
@@ -119,9 +130,8 @@ export const STATE = {
  * The live electrical readings.
  *
  * Units are the device's own: mA for current, V for voltage, W for power. The
- * conversion into the units Gladys stores happens once, in the device builder,
- * so a scene and the interface can never disagree about the unit of the same
- * number.
+ * conversion into the units Gladys stores happens once, in the device builder, so a
+ * scene and the interface can never disagree about the unit of the same number.
  */
 export const METER = {
   current_l1: 1008,
@@ -134,21 +144,32 @@ export const METER = {
   power_l1: { address: 1024, count: 2 },
   power_l2: { address: 1028, count: 2 },
   power_l3: { address: 1032, count: 2 },
-  // Meter reading in 0.1 kWh: divided by ten and by 1000 on the way in, so what
-  // reaches Gladys is the kilowatt-hour figure the bill uses.
+  // Meter reading in 0.1 kWh: divided by ten on the way in, so what reaches Gladys
+  // is the kilowatt-hour figure the bill uses.
   meter_reading: { address: 1036, count: 2 },
 };
 
-/** What the EVSE and the attached cable will accept, in amperes. */
-export const LIMITS = {
-  session_max_current: 1100,
+/**
+ * The limits, READ AND NEVER WRITTEN.
+ *
+ * These are the figures the installer set on the device, and they answer "how much
+ * may I ask for", not "how much do I want". A setpoint above `evse_max_current` is
+ * not an error the wallbox reports — it charges at its own maximum while Gladys
+ * would report the number it was asked for, which is why every setpoint is clamped
+ * against these values rather than against a constant in the code.
+ *
+ * `session_max_current` is deliberately not part of the ceiling: it describes the
+ * session that is running, not what may be asked for.
+ */
+export const READ_ONLY = {
   evse_min_current: 1102,
   evse_max_current: 1104,
   cable_max_current: 1106,
 };
 
-/** The current charging session, if there is one. */
+/** The session registers, read for the triggers and the card. */
 export const SESSION = {
+  max_current: 1100,
   energy: { address: 1502, count: 2 }, // Wh
   start_time: { address: 1504, count: 2 },
   duration: { address: 1508, count: 2 }, // s
@@ -156,13 +177,16 @@ export const SESSION = {
 };
 
 /**
- * The failsafe registers. They are READ/WRITE, and they are the reason a
- * controlled charge does not silently fall back to a trickle.
+ * The failsafe registers. READ/WRITE on the device, READ ONLY here.
  *
- * `alive` is special: the master writes 1, the wallbox writes 0 back, and it
- * checks the register every `timeout / 2` seconds. An unanswered alive register
- * means "the master is gone", and the wallbox switches to `current`. The period
- * cannot go below 3 seconds.
+ * The specification calls them R/W, and so the integration could set them — but a
+ * failsafe value is device configuration, and it is not something Gladys has any
+ * business changing. So they are read back and shown, and never written.
+ *
+ * `alive` is the one exception, and it is not configuration: the master writes 1,
+ * the wallbox writes 0 back, and it checks the register every `timeout / 2`
+ * seconds. An unanswered alive register means "the master is gone", and the wallbox
+ * falls back to `current`. The period cannot go below 3 seconds.
  */
 export const FAILSAFE = {
   current: 2000,
@@ -175,6 +199,19 @@ export const CONTROL = {
   charging_current: 5004,
 };
 
+/**
+ * The smallest and the largest charging current used when the device does not
+ * answer its own limit registers at all.
+ *
+ * THE CEILING IS NOT A GUESS ABOUT ANY PARTICULAR WALLBOX
+ * It is the smallest figure that makes sense for a home charge point. A ceiling that
+ * is too high is not refused by the device — the wallbox charges at its own maximum
+ * while Gladys reports what it was asked for. So the fallback stays low on purpose,
+ * and the real figure is normally read from 1104 and 1106.
+ */
+export const DEFAULT_MIN_CURRENT = 6;
+export const DEFAULT_MAX_CURRENT = 16;
+
 /** The shortest alive period the device accepts, in seconds. */
 export const MIN_ALIVE_PERIOD_S = 3;
 
@@ -182,8 +219,8 @@ export const MIN_ALIVE_PERIOD_S = 3;
  * The alive period for a given failsafe timeout: half of it, never below 3 s.
  *
  * Half is what the specification prescribes. The floor exists because a timeout
- * configured to 4 seconds would otherwise ask for a 2-second beat, and the
- * device refuses to be driven that fast.
+ * configured to 4 seconds would otherwise ask for a 2-second beat, and the device
+ * refuses to be driven that fast.
  */
 export function alivePeriodMs(failsafeTimeoutS) {
   const seconds = Math.max(MIN_ALIVE_PERIOD_S, Number(failsafeTimeoutS) / 2 || 0);
@@ -249,17 +286,17 @@ export const POLL_PLAN = [
   { key: 'meter_reading', kind: 'acc32', address: METER.meter_reading.address, unit: '0.1kWh' },
   { key: 'session_energy', kind: 'acc32', address: SESSION.energy.address, unit: 'Wh' },
   { key: 'session_duration', kind: 'acc32', address: SESSION.duration.address, unit: 's' },
-  { key: 'session_max_current', kind: 'uint16', address: LIMITS.session_max_current, unit: 'A' },
-  { key: 'evse_min_current', kind: 'uint16', address: LIMITS.evse_min_current, unit: 'A' },
-  { key: 'evse_max_current', kind: 'uint16', address: LIMITS.evse_max_current, unit: 'A' },
-  { key: 'cable_max_current', kind: 'uint16', address: LIMITS.cable_max_current, unit: 'A' },
+  { key: 'session_max_current', kind: 'uint16', address: SESSION.max_current, unit: 'A' },
+  { key: 'evse_min_current', kind: 'uint16', address: READ_ONLY.evse_min_current, unit: 'A' },
+  { key: 'evse_max_current', kind: 'uint16', address: READ_ONLY.evse_max_current, unit: 'A' },
+  { key: 'cable_max_current', kind: 'uint16', address: READ_ONLY.cable_max_current, unit: 'A' },
 ];
 
 /**
  * The register keys the whole integration agrees on.
  *
- * Treated as permanent: they are the suffix of the feature external ids, and
- * Gladys stores the history, the scenes and the dashboards against those.
+ * Treated as permanent: they are the suffix of the feature external ids, and Gladys
+ * stores the history, the scenes and the dashboards against those.
  */
 export const KEY = {
   CHARGE_STATE: 'charge_state',
