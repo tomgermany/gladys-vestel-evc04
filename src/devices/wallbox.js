@@ -6,8 +6,8 @@
 // reading. It carries a name, an external id, a category, a type and a unit.
 // Gladys files and displays it by its category, which is why the category has to
 // be one Gladys knows: an unknown category is not a warning, it is a refusal of
-// the WHOLE device, and the Discovery tab stays empty while the integration logs
-// a perfectly healthy list of features.
+// the WHOLE device, and the Discovery tab stays empty while the integration logs a
+// perfectly healthy list of features.
 //
 // WHICH FEATURES EXIST IS DECIDED BY THE DEVICE
 // The builder only makes a feature for a key the wallbox really answered. A
@@ -15,13 +15,19 @@
 // the interface never shows a zero that would be wrong.
 //
 // UNITS ARE CONVERTED ONCE, HERE
-// The device reports current in milliamperes and the meter reading in tenths of
-// a kilowatt-hour. Gladys stores amperes and kilowatt-hours, so both divisions
+// The device reports current in milliamperes and the meter reading in tenths of a
+// kilowatt-hour. Gladys stores amperes and kilowatt-hours, so both divisions
 // happen on the way in — in this file, so a scene and the interface cannot
 // disagree about the unit of the same number.
 //
-// IT IS UNIT-TESTED WITHOUT A DEVICE: buildDevice() takes a plain snapshot, so
-// the tests hand it hand-written readings.
+// ONLY ONE FEATURE IS WRITABLE, AND IT SAYS SO
+// `charging_current` is the single feature a user can set from Gladys, and it is
+// the only one with `writable: true`. Everything else — the limits the device
+// reports, the states, the meter — is a reading. That is the same rule the
+// register map states in one place, kept here where the features are built.
+//
+// IT IS UNIT-TESTED WITHOUT A DEVICE: buildDevice() takes a plain snapshot, so the
+// tests hand it hand-written readings.
 // -----------------------------------------------------------------------------
 
 import {
@@ -30,6 +36,7 @@ import {
   DEVICE_FEATURE_UNITS as UNIT,
   createLogger,
 } from '@gladysassistant/integration-sdk';
+import { DEFAULT_MIN_CURRENT, DEFAULT_MAX_CURRENT } from '../vestel/registers.js';
 
 const logger = createLogger({ name: 'wallbox' });
 
@@ -43,9 +50,9 @@ const TEXT = TYPE.TEXT?.TEXT ?? 'text';
  * The category of every energy reading here.
  *
  * `energy-sensor` is the category that carries a three-phase meter: power,
- * energy, voltage, current, index. It is the only energy category in this file
- * on purpose — a second one would have to be a category Gladys knows, and the
- * whole device is refused if it is not.
+ * energy, voltage, current, index. It is the only energy category in this file on
+ * purpose — a second one would have to be a category Gladys knows, and the whole
+ * device is refused if it is not.
  */
 const CAT_ENERGY = CAT.ENERGY_SENSOR;
 
@@ -61,11 +68,11 @@ const CAT_ENERGY = CAT.ENERGY_SENSOR;
  */
 export const FEATURES = [
   // --- What the wallbox is doing ---
-  // The charge state and the cable state are texts: Gladys has no enum feature
-  // for "available", "charging", "faulted", so the state rides on a text
-  // feature and src/widgets.js turns it into a sentence. `keep_history` is off
-  // for both: a state that flips back and forth is not a measurement, and a
-  // history of it would only clutter the graph.
+  // The charge state and the cable state are texts: Gladys has no enum feature for
+  // "available", "charging", "faulted", so the state rides on a text feature and
+  // src/widgets.js turns it into a sentence. `keep_history` is off for both: a
+  // state that flips back and forth is not a measurement, and a history of it
+  // would only clutter the graph.
   {
     key: 'charge_state',
     name: 'Ladezustand',
@@ -157,10 +164,23 @@ export const FEATURES = [
     writable: false,
   },
 
+  // --- The limits the DEVICE reports, shown so the user can see them ---
+  // Read-only on purpose. These are the installer's figures, and showing them is
+  // how a user can tell why a setpoint of 16 A turned into 13: the wallbox says 13
+  // is its maximum. Nothing in Gladys can change them.
+  { key: 'evse_min_current', name: 'Minimaler Ladestrom (Wallbox)', category: CAT_ENERGY, type: CURRENT, unit: UNIT.AMPERE, scale: 1, writable: false },
+  { key: 'evse_max_current', name: 'Maximaler Ladestrom (Wallbox)', category: CAT_ENERGY, type: CURRENT, unit: UNIT.AMPERE, scale: 1, writable: false },
+  { key: 'cable_max_current', name: 'Maximaler Ladestrom (Kabel)', category: CAT_ENERGY, type: CURRENT, unit: UNIT.AMPERE, scale: 1, writable: false },
+
   // --- The control ---
-  // The charging current is what a scene sets for surplus charging. It is the
-  // only writable feature, and the alive heartbeat in src/alive.js exists for
-  // exactly this one: without it the wallbox drops back to the failsafe value.
+  // The charging current is what a scene sets for surplus charging. It is the only
+  // writable feature, and the heartbeat in src/alive.js exists for exactly this
+  // one: without it the setpoint does not survive.
+  //
+  // The min and max here are only what a slider offers before the device has
+  // answered; every write is clamped against the limits the WALLBOX reported, not
+  // against these numbers. Keeping them equal to the fallbacks in registers.js
+  // means the two cannot drift apart.
   {
     key: 'charging_current',
     name: 'Ladestrom',
@@ -168,8 +188,8 @@ export const FEATURES = [
     type: CURRENT,
     unit: UNIT.AMPERE,
     scale: 1,
-    min: 6,
-    max: 32,
+    min: DEFAULT_MIN_CURRENT,
+    max: DEFAULT_MAX_CURRENT,
     writable: true,
   },
 ];
@@ -178,20 +198,20 @@ export const FEATURES = [
  * The platform id of ONE wallbox, and why it is not the name.
  *
  * Gladys keys history, scenes and dashboards on the external id, so it has to
- * survive a rename and stay unique when two charge points share an
- * installation. The serial is what the hardware reports; the host is only a
- * fallback for a device that answers nothing there.
+ * survive a rename and stay unique when two charge points share an installation.
+ * The serial is what the hardware reports; the host is only a fallback for a
+ * device that answers nothing there.
  */
 export const platformId = (device) => device.serial || device.host;
 
 /**
  * The type segment of the external ids, deliberately empty.
  *
- * The SDK composes `ext:<selector>:<type>:<platformId>`, and Gladys checks that
- * the id starts with `ext:<selector>:`. The selector is the integration's own
- * name, set by the supervisor, and it is already in the id. Putting anything
- * here would push the platform id one segment to the right and Gladys would
- * refuse the whole device.
+ * The SDK composes `ext:<selector>:<type>:<platformId>`, and Gladys checks that the
+ * id starts with `ext:<selector>:`. The selector is the integration's own name, set
+ * by the supervisor, and it is already in the id. Putting anything here would push
+ * the platform id one segment to the right and Gladys would refuse the whole
+ * device.
  */
 export const PLATFORM_TYPE = '';
 
@@ -212,9 +232,9 @@ export function featureValue(feature, snapshot) {
 /**
  * A reading snapshot as the scene actions and the widget receive it.
  *
- * The snapshot holds the device's own names and units. What this adds is the
- * one thing every consumer wants: a boolean that says whether energy is flowing
- * right now, which is also the value the two scene triggers watch.
+ * The snapshot holds the device's own names and units. What this adds is the one
+ * thing every consumer wants: a boolean that says whether energy is flowing right
+ * now, which is also the value the two scene triggers watch.
  */
 export function decorate(snapshot = {}) {
   if (!snapshot || Object.keys(snapshot).length === 0) return snapshot;
