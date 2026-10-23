@@ -1,6 +1,6 @@
 # Notizen zur Vestel EVC04
 
-Vier Regeln, die dieses Gerät von einem gewöhnlichen Modbus-Zähler unterscheiden.
+Die Regeln, die dieses Gerät von einem gewöhnlichen Modbus-Zähler unterscheiden.
 Jede davon hat schon einmal Zeit gekostet, wenn sie übersehen wurde.
 
 ## 1. Unit ID 255, nicht 1
@@ -28,7 +28,17 @@ schaltet sie auf den **Failsafe-Strom** (Register 2000) um.
   geloggt, das Auto lädt nur langsamer als gewünscht.
 - Umgesetzt in `src/alive.js`: `set()` startet den Schlag, `clear()` beendet ihn.
 
-## 4. Die Adressfrage ist noch offen
+## 4. Geschrieben werden genau zwei Register
+
+Alle anderen werden nur gelesen — auch die, die das Gerät als R/W deklariert:
+
+- **Geschrieben:** `5004` (Ladestrom) und `6000` (Herzschlag). Beides ist
+  Ladesteuerung, keine Konfiguration.
+- **Nur gelesen:** die Grenzen `1102`, `1104`, `1106` und der Failsafe-Block
+  `2000`, `2002`. Was du in der Wallbox einträgst, gilt — wer nicht ans Gerät geht,
+  kommt an diese Werte nicht heran.
+
+## 5. Die Adressfrage ist noch offen
 
 Die Herstellertabelle druckt Bereiche wie `Serial Number [100,124]` und einzelne
 Adressen wie `1008`. Zwei Lesarten sind möglich:
@@ -54,15 +64,18 @@ dieselben — nur die String-Blöcke hängen an dieser Frage.
 - **Keine Skalierungsregister.** Die Einheiten stehen fest in der Tabelle: mA, V, W,
   0,1 kWh, Wh, A. Das ist der wesentliche Unterschied zu einem SunSpec-Gerät wie dem
   WattWächter.
+- **Ladestrom-Bereich:** am Gerät einstellbar sind 6 bis 16 A in Einerschritten.
+  Die Integration baut diese Zahlen trotzdem nicht fest ein — sie liest `1104` und
+  `1106` vom Gerät und klemmt jeden Sollwert darauf. Rückfallwert, falls das Gerät
+  die Register nicht beantwortet: 6 bis 16.
 - **Kategorien prüfen.** Eine Kategorie, die Gladys nicht kennt, lässt es das **ganze**
   Gerät verwerfen: `devices[0].features[n].category: unknown category`. Die
   Gerätesuche bleibt dann leer, während die Integration eine völlig gesunde Liste von
   Features loggt.
-- **Ladestrom wird in Register 5004 gesetzt.** Der Wert wird gegen die Grenzen
-  geklemmt, die das Gerät selbst meldet (EVSE-Minimum, EVSE-Maximum, Kabel-Maximum) —
-  32 A anzunehmen und falsch zu liegen ist der Weg zur fliegenden Sicherung.
 - **Registrierkarte der Kategorien** ist `energy-sensor`; der Ladestrom hängt als
   `current` daran.
 - **Die Szenenauslöser feuern auf der Flanke.** „Wallbox lädt" ist der Übergang
   0 → 1 des Registers 1001, nicht der Wert 1. Ein Auslöser auf den Wert würde bei
   jedem Lesevorgang feuern, stundenlang.
+- **Noch nicht am Gerät getestet.** Der Code ist gegen die Spezifikation gebaut und
+  durch Lint und Tests gelaufen, aber noch nie mit einer echten Wallbox verbunden.
