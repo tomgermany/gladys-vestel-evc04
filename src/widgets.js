@@ -10,18 +10,15 @@
 // The card does not show "Ladezustand: 2". It says what is happening: "Ich lade
 // aktuell mit 11 kW." That sentence is the first thing on the card.
 //
-// WHY THE CONTROL IS SHOWN AT ALL
-// Setting a charging current puts the wallbox under this integration's control:
-// from that moment the setpoint holds, and the heartbeat in src/alive.js keeps it
-// alive. A card that did not say so would leave the user guessing which of the two
-// states is in force — "charges at 6 A because the car asked for it" and "charges
-// at 6 A because nobody is controlling it" look identical on the device page.
+// WHY THE CARD STILL SHOWS A CONTROL
+// The wallbox has no start and no stop — a charge begins when the vehicle accepts
+// the current. The ONE thing that can be steered from here is how much current the
+// vehicle may draw, and that is what these two buttons do.
 //
-// WHY THERE IS A RELEASE BUTTON AND NOT JUST +/- STEPS
-// A setpoint can be set from a scene and released from a scene; if the card could
-// only set, the difference would be invisible here. Both surfaces therefore offer
-// both, and the button appears only while a setpoint is under control — a button
-// that would do nothing is worse than no button.
+// WHY THERE IS NO RELEASE BUTTON
+// An earlier version had one, and it was wrong twice over: the device has no such
+// state, and a button that only writes a different number is not a release. Whoever
+// wants another current taps + or −.
 //
 // WHY THERE IS NO `settings` PARAMETER
 // There is one wallbox, and the card shows it. A per-instance setting would only
@@ -32,8 +29,7 @@
 // A card takes at most 8 components, and among them at most 4 BUTTONS, 6 value
 // tiles, 2 texts and 1 status list. Anything past a cap is DROPPED, in content
 // order, silently. So the sentence comes first, then the values a user actually
-// looks at, then the buttons. A fifth button would simply never appear, which is
-// why the release button is conditional.
+// looks at, then the two buttons.
 //
 // THE TILES ARE BOUND TO FEATURES, NOT TO NUMBERS
 // A tile with `device_feature` carries the external id of a published feature,
@@ -52,17 +48,22 @@ export const CHARGER_WIDGET = 'charger';
 export const ACTION = {
   CURRENT_DOWN: 'current_down',
   CURRENT_UP: 'current_up',
-  RELEASE: 'release',
 };
 
 /** How many amperes one tap of the current buttons moves. */
 export const CURRENT_STEP = 1;
 
-/** The smallest charging current a vehicle is expected to accept, in amperes. */
+/**
+ * The floor of the charging current, in amperes.
+ *
+ * The manufacturer's app offers 6 A as the lowest setting, and the device's own
+ * `1102` answers 0 on the reference unit — a value the wallbox refuses as a
+ * setpoint. So 6 A is the floor here, whatever that register claims.
+ */
 export const MIN_CURRENT = 6;
 
 /**
- * Is a setpoint under our control?
+ * Is a setpoint set?
  *
  * `null` means "no value", and so does `false` — the two arrive from different
  * callers and mean the same thing. Anything else, including 0, is a value that was
@@ -89,7 +90,7 @@ export function currentLabel(t, current) {
  * @param {object|null} ctx.state the last reading snapshot
  * @param {object|null} ctx.device { name, serial, model, host }
  * @param {object} ctx.ids { power, session_energy, meter_reading, charging_current }
- * @param {number|false|null} ctx.controlled the charging current under our control
+ * @param {number|false|null} ctx.controlled the charging current we have set
  * @param {Function} ctx.t labels, per language
  * @param {Function} ctx.sentence state as one sentence, per language
  */
@@ -116,7 +117,7 @@ export function buildChargerContent({
     items: [
       {
         label: t('power'),
-        icon: state.chargepoint_state === 'charging' ? 'zap' : 'battery-charging',
+        icon: state.charging_state === 1 ? 'zap' : 'battery-charging',
         value: sentence(state),
         color: stateColor(state),
       },
@@ -132,7 +133,7 @@ export function buildChargerContent({
       icon: 'zap',
       device_feature: ids.power,
       unit: 'kW',
-      color: state.chargepoint_state === 'charging' ? 'success' : 'neutral',
+      color: state.charging_state === 1 ? 'success' : 'neutral',
     });
   }
 
@@ -161,17 +162,16 @@ export function buildChargerContent({
     });
   }
 
-  // 5. WHICH CURRENT IS IN FORCE, and the user has to be able to tell.
+  // 5. WHICH CURRENT IS SET, and the user has to be able to tell.
   //
   //    Two states that look alike and are not:
-  //      - a value under our control: the heartbeat is running and the wallbox
-  //        charges with exactly this current;
-  //      - no value under our control: the wallbox uses its own setting, which
-  //        this integration does not read back and therefore does not guess at.
+  //      - a value we set: the heartbeat is running and the wallbox charges with
+  //        exactly this current;
+  //      - no value from us: the wallbox uses its own setting, which this
+  //        integration does not read back and therefore does not guess at.
   //
-  //    A register READING is not the same as a value WE SET: the register holds
-  //    whatever was written last, by anyone. So the tile is bound to the feature
-  //    our own writes publish, and its label names the number.
+  //    A register READING is not the same as a value WE SET: the tile is bound to
+  //    the feature our own writes publish, and its label names the number.
   if (ids.charging_current) {
     components.push({
       type: 'value',
@@ -183,8 +183,9 @@ export function buildChargerContent({
     });
   }
 
-  // 6. The control. Two buttons that move the charging current one ampere at a
-  //    time, inside what the device and its cable allow.
+  // 6. The control: two buttons that move the charging current one ampere at a
+  //    time, inside what the device and its cable allow. There is nothing else to
+  //    steer on this device.
   if (ids.charging_current) {
     components.push({
       type: 'button',
@@ -200,17 +201,6 @@ export function buildChargerContent({
       style: 'secondary',
       action: { key: ACTION.CURRENT_UP, params: { step: CURRENT_STEP } },
     });
-
-    // 7. The release button, only while a setpoint is under control.
-    if (hasControl(controlled)) {
-      components.push({
-        type: 'button',
-        label: t('release'),
-        icon: 'x',
-        style: 'secondary',
-        action: { key: ACTION.RELEASE },
-      });
-    }
   }
 
   return { ttl_seconds: 60, components };
@@ -218,9 +208,10 @@ export function buildChargerContent({
 
 /** The colour of the state row: a fault is not a neutral event. */
 function stateColor(state) {
-  if (state.chargepoint_state === 'faulted') return 'danger';
-  if (state.chargepoint_state === 'charging') return 'success';
-  if (state.chargepoint_state === 'unavailable') return 'warning';
+  if (state.fault_code) return 'danger';
+  if (state.chargepoint_state === 8) return 'danger';
+  if (state.charging_state === 1) return 'success';
+  if (state.chargepoint_state === 7) return 'warning';
   return 'neutral';
 }
 
@@ -244,7 +235,6 @@ export function chargerAction({
   actionKey,
   params,
   state,
-  controlled = null,
   limits,
   t = (key) => key,
 }) {
@@ -260,12 +250,6 @@ export function chargerAction({
       const max = Number.isFinite(ceiling) ? Math.max(min, ceiling) : Infinity;
       const next = Math.min(max, Math.max(min, Math.round(base + delta)));
       return { current: next, toast: t('control', next) };
-    }
-    case ACTION.RELEASE: {
-      if (!hasControl(controlled)) {
-        throw new Error('No charging current is under control');
-      }
-      return { release: true, toast: t('releasing') };
     }
     default:
       throw new Error(`Unknown widget action: ${actionKey}`);
