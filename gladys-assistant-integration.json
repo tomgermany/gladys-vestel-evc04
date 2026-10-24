@@ -8,7 +8,7 @@
     "fr": "Pilote et surveille la borne Vestel EVC04 en Modbus TCP.",
     "es": "Controla y supervisa el cargador Vestel EVC04 por Modbus TCP."
   },
-  "version": "0.6.3",
+  "version": "0.6.4",
   "docker_image": "ghcr.io/tomgermany/gladys-vestel-evc04:latest",
   "gladys_version": ">=5.1.0",
   "categories": [
