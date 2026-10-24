@@ -47,9 +47,15 @@ const snapshot = {
 test('the manifest config defaults match DEFAULT_CONFIG', () => {
   for (const field of manifest.config_schema ?? []) {
     if (field.default !== undefined) {
+      const manifestDefault =
+        field.type === 'select' &&
+        typeof DEFAULT_CONFIG[field.key] === 'number'
+          ? Number(field.default)
+          : field.default;
+
       assert.equal(
         DEFAULT_CONFIG[field.key],
-        field.default,
+        manifestDefault,
         `DEFAULT_CONFIG.${field.key} must match the manifest default`,
       );
     }
