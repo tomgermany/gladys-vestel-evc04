@@ -1,66 +1,98 @@
 # Vestel EVC04 Wallbox
 
- Eine externe [Gladys Assistant](https://gladysassistant.com/)-Integration f\u00fcr die Ladestation
-**Vestel EVC04 Home** \u00fcber Modbus TCP/IP. Rein lokal: kein Cloud, kein OCPP-Backend, kein Konto.
+Externe [Gladys Assistant](https://gladysassistant.com/)-Integration für die **Vestel EVC04 Home**. Sie liest Messwerte aus und steuert den erlaubten Ladestrom über **Modbus TCP** – vollständig lokal, ohne Hersteller-Cloud, OCPP-Backend oder Benutzerkonto.
 
-## Warum Modbus und nicht OCPP
+## Funktionen
 
- Die Wallbox bietet drei Wege: die Hersteller-Cloud, OCPP 1.6, und Modbus TCP.
-
-OCPP ist ein Protokoll zwischen einer Ladestation und einem **Backend**. Im Heimgebrauch hie\u00dfe das,
-selbst einen Server zu betreiben, der Vertr\u00e4ge, Authentifizierung und Lastmanagement f\u00fchrt \u2014 die
-Integration w\u00e4re dann nicht der Endpunkt, sondern ein zweiter Container dazwischen. F\u00fcr \u201elade mit
-PV-\u00dcberschuss\u201c ist das ein Umweg ohne Gegenwert.
-
-Modbus ist ein Register auf dem Ger\u00e4t selbst: eine Verbindung, ein Lese- oder Schreibbefehl. Hier
-ist es derselbe Weg wie bei der WattW\u00e4chter-Integration.
+- Wallbox als Gerät in Gladys entdecken und Messwerte veröffentlichen.
+- Ladezustand, Leistung, Strom, Spannung und Energie erfassen.
+- Ladestrom über die Wallbox-Kachel, eine Gladys-Szene oder die Aktion **„Ladestrom setzen“** einstellen.
+- Szenenereignisse beim Beginn und Ende eines Ladevorgangs auslösen.
+- Verbindung über die Aktion **„Verbindung prüfen“** testen.
+- Aktualisierungsintervall passend zum eigenen Bedarf einstellen.
 
 ## Voraussetzungen
 
 - Gladys Assistant **5.1.0 oder neuer**.
-- Modbus TCP auf der Wallbox ist aktiviert (Port **502**).
-- Der **Modbus Unit ID ist 255**, nicht 1.
-- Wallbox und Gladys-Host im selben Netz.
+- Modbus TCP ist in der Wallbox aktiviert.
+- Wallbox und Gladys-Host sind im selben Netzwerk erreichbar.
+- Standardmäßig verwendet die Wallbox Modbus-Port **502** und Unit ID **255**.
 
-## Der Alive-Register, bevor irgendetwas gesteuert wird
+Die EVC04 erlaubt nur **einen Modbus-Master gleichzeitig**. Diese Integration verwendet deshalb eine einzige Verbindung für Messungen, Verbindungstest und Steuerbefehle. Bitte nicht parallel einen zweiten Modbus-Client mit der Wallbox verbinden.
 
-Die Wallbox erwartet, dass der Master in Register `6000` **regelm\u00e4\u00dfig eine 1 schreibt**; sie setzt den
-Wert danach selbst auf 0 zur\u00fcck. Bleibt das aus, schaltet sie auf den **Failsafe-Strom** um.
+## Installation und Konfiguration
 
-Das Zeitfenster gibt `2002` (Failsafe Timeout, Standard 20 s) vor: solange eine Steuerung aktiv ist,
-wird der Alive-Register in der **halben** Timeout-Zeit bedient, mindestens alle 3 s. Ohne diesen
-Herzschlag f\u00e4llt jede Ladestrom-Vorgabe auf den Failsafe-Wert zur\u00fcck \u2014 das ist keine Feinheit,
-sondern die Grundbedingung f\u00fcr gesteuertes Laden.
+Installiere die Integration in Gladys über das Integrationssystem. Das Container-Image wird unter folgender Adresse veröffentlicht:
 
-## Nur EINE Modbus-Verbindung
+`ghcr.io/tomgermany/gladys-vestel-evc04:latest`
 
-Der Hersteller sagt es ausdr\u00fccklich: es kann zu jedem Zeitpunkt nur **ein** Modbus-Master verbunden
-sein (beim WattW\u00e4chter sind es zwei Slots). Deshalb besitzt dieser Prozess genau eine Verbindung,
-und auch der Verbindungstest benutzt sie mit, statt eine zweite aufzumachen.
+Trage anschließend in der Integrationskonfiguration ein:
 
-## Registerkarte
+| Einstellung | Standard | Bedeutung |
+| --- | --- | --- |
+| Adresse der Wallbox | – | IP-Adresse oder mDNS-Name, ohne `http://`; eine feste IP per DHCP-Reservierung ist empfehlenswert |
+| Modbus-Port | `502` | Nur ändern, wenn die Wallbox einen anderen Port verwendet |
+| Modbus Unit ID | `255` | Die EVC04 antwortet standardmäßig auf Unit ID 255 |
+| Aktualisierungsintervall | `5 Minuten` | Messwerte werden alle 1, 5, 15, 30 oder 60 Minuten gelesen und an Gladys übergeben |
+| Herzschlag-Frist | `20 Sekunden` | Bestimmt den Takt des Alive-Registers während aktiver Ladestromsteuerung |
 
-Die Adressangaben im Herstellerdokument sind vermutlich **Dokumentadressen**, nicht die Adressen auf
-der Leitung. Ob ein Register unter `1008` oder `1007` liegt, muss am Ger\u00e4t entschieden werden; die
-Registerkarte h\u00e4lt die Adressen deshalb in `src/vestel/registers.js` an einer Stelle.
+Nach dem Speichern kannst du **„Verbindung prüfen“** verwenden. Die Integration liest die Wallbox über ihre bestehende Verbindung aus und meldet, ob sie geantwortet hat.
+
+## Aktualisierung und Erreichbarkeit
+
+Das Aktualisierungsintervall steuert, wie oft Messwerte neu gelesen und in Gladys aktualisiert werden. Die Abfrage erfolgt im Minutenraster; das gewählte Intervall wird durch Überspringen dazwischenliegender Ticks umgesetzt.
+
+Ein fehlgeschlagener Lesevorgang wird protokolliert und die Integration versucht einmal, die Verbindung über einen frischen Socket wiederherzustellen. Bei einem Intervall von fünf Minuten kann es bis zur nächsten Abfrage dauern, bis ein Erreichbarkeitsproblem durch das reguläre Polling auffällt. Die Integration kann eine vollständig festgefahrene Wallbox nicht durch den Heartbeat neu starten.
+
+## Ladestrom und Heartbeat
+
+Die Wallbox hat keinen separaten Start-/Stopp-Befehl für den Ladevorgang. Die Integration stellt den erlaubten Ladestrom über Register `5004` ein. Der Ladevorgang beginnt oder endet abhängig davon, ob das Fahrzeug Strom aufnimmt.
+
+- Der Ladestrom wird auf mindestens **6 A** und höchstens auf den von Wallbox und Kabel gemeldeten zulässigen Wert begrenzt.
+- Die Dashboard-Kachel enthält Schaltflächen zum Verringern und Erhöhen des Ladestroms. Die Schrittweite lässt sich pro Kachel auf **1, 2 oder 5 A** einstellen.
+- Szenen können über **„Ladestrom setzen“** einen Wert vorgeben.
+- Solange eine Ladestromvorgabe aktiv gesteuert wird, hält die Integration den Heartbeat über Register `6000` aufrecht. Bei einer Standardfrist von 20 Sekunden erfolgt dies etwa alle 10 Sekunden, mindestens jedoch im Abstand von 3 Sekunden.
+- Wenn der Heartbeat ausbleibt, fällt die Wallbox auf ihren Failsafe-Strom zurück. Der Heartbeat ist unabhängig vom Messwert-Aktualisierungsintervall und ersetzt keine Neustartfunktion.
+
+## Szenen
+
+Die Integration stellt zwei Szenenereignisse bereit:
+
+- **Wallbox lädt** – wird beim Übergang in den Ladezustand ausgelöst.
+- **Wallbox beendet** – wird beim Übergang aus dem Ladezustand ausgelöst.
+
+Je nach Ereignis stehen Messwerte wie Leistung, Ladestrom, Zählerstand, Sitzungsenergie und Dauer als Variablen bereit. Zusätzlich kann eine Szene mit der Aktion **„Ladestrom setzen“** den gewünschten Strom vorgeben.
+
+## Fehlerbehebung
+
+- **Keine Antwort:** Prüfe IP-Adresse, Netzwerkverbindung und ob Modbus TCP in der Wallbox aktiviert ist.
+- **Falsche Unit ID:** Verwende normalerweise `255`, nicht `1`.
+- **Verbindung belegt:** Stelle sicher, dass kein anderer Modbus-Client parallel mit der EVC04 verbunden ist.
+- **Werte werden nicht sofort aktualisiert:** Prüfe das eingestellte Aktualisierungsintervall oder führe **„Verbindung prüfen“** aus.
+- **Die Wallbox reagiert überhaupt nicht mehr:** Der Heartbeat kann den Failsafe-Strom auslösen, aber die Integration kann einen Firmware-Hänger nicht selbst durch Aus- und Einschalten beheben.
 
 ## Entwicklung
+
+Voraussetzung ist Node.js **22 oder neuer**.
 
 ```bash
 npm install
 npm test
 npm run lint
-node index.js
+npm start
 ```
 
-- `index.js` verdrahtet nur: jeder Handler wird vor der Verbindung registriert.
-- `src/vestel/transport.js` ist der rohe TCP-Socket (MBAP-Rahmen, Slots, Schlie\u00dfen vor \u00d6ffnen).
-- `src/vestel/modbus.js` ist das Protokoll.
-- `src/vestel/registers.js` ist die Registerkarte der EVC04.
-- `src/devices/wallbox.js` macht die Wallbox zu einem Gladys-Ger\u00e4t.
-- `src/widgets.js` baut den Inhalt der Kachel.
-- `src/scenes.js` h\u00e4lt die Szenenausl\u00f6ser und -aktionen.
-- `src/alive.js` ist der Herzschlag f\u00fcr den Alive-Register.
+Wichtige Dateien:
+
+- `index.js` – verbindet die Gladys-Handler mit Client, Gerät, Kachel und Szenen.
+- `src/vestel/transport.js` – TCP-Verbindung und Modbus-Transport.
+- `src/vestel/modbus.js` – Modbus-Protokoll.
+- `src/vestel/registers.js` – Registerdefinitionen der EVC04.
+- `src/devices/wallbox.js` – Gladys-Gerät und Messwerte.
+- `src/widgets.js` – Inhalt und Bedienlogik der Wallbox-Kachel.
+- `src/scenes.js` – Szenenereignisse und Ladestrom-Aktion.
+- `src/alive.js` – Heartbeat für die aktive Ladestromsteuerung.
+- `src/config.js` – Standardwerte und Normalisierung der Konfiguration.
 
 ## Lizenz
 
