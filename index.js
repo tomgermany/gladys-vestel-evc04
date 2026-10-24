@@ -190,8 +190,8 @@ gladys.onWidget(CHARGER_WIDGET, async () => {
     sentence: (state) =>
       deviceSentence({
         word: Evc04Client.stateWord(state, 'chargepoint_state'),
-        power: state?.power ?? null,
-        faultCode: state?.fault_code ?? null,
+        power: Evc04Client.reading(state, 'power'),
+        faultCode: Evc04Client.reading(state, 'fault_code'),
       }),
   });
 });
@@ -203,10 +203,11 @@ gladys.onWidget(CHARGER_WIDGET, async () => {
  * the snapshot the user is looking at, so two taps in a row give two different
  * values, and the limits come from the DEVICE rather than from the card.
  *
- * The handler takes only `action`. The SDK also passes the feature that was
- * tapped, and this device does not need it: the only one it writes is
- * `charging_current`, and the widest tap is {"-", "+"} on that same card. Taking
- * a parameter nobody reads is how a lint rule gets silenced instead of obeyed.
+ * THE READING IS FOLDED BACK INTO THE SNAPSHOT
+ * The wallbox reports the current it delivers in register 1500, and a setpoint we
+ * have just written is not that figure yet. Rather than show a number the device
+ * has not confirmed, the new value is written into the snapshot under the same key
+ * the reading uses, with the same scaling — one name, one shape, one place.
  */
 gladys.onWidgetAction(async ({ action }) => {
   const intent = chargerAction({

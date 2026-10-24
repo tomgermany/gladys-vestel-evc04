@@ -58,6 +58,16 @@ export const STATE_TABLES = {
   equipment_state: EQUIPMENT_STATE,
 };
 
+/**
+ * Is this snapshot entry a state, i.e. an object carrying its word?
+ *
+ * THE ONE PLACE THAT KNOWS THE SHAPE. A state is `{ value, word }`; every other
+ * reading is a bare number. Deciding that with a `typeof` test at each call site is
+ * how the two get mixed up, and it is why this helper exists rather than a repeated
+ * test.
+ */
+const isStateEntry = (entry) => typeof entry === 'object' && entry !== null;
+
 export class Evc04Client extends VestelModbus {
   /**
    * Identify the device: the strings that prove it answers, and the identity the
@@ -117,19 +127,6 @@ export class Evc04Client extends VestelModbus {
   }
 
   /**
-   * A state's NUMBER out of the snapshot, or null when it was not read.
-   *
-   * Exported as a helper because every consumer needs the same unwrapping, and a
-   * second implementation of it is a second place to get the shape wrong.
-   */
-  static stateValue(snapshot, key) {
-    const entry = snapshot?.[key];
-    if (entry === null || entry === undefined) return null;
-    if (typeof entry === 'object') return entry.value ?? null;
-    return entry;
-  }
-
-  /**
    * A state's WORD out of the snapshot, or null when there is none.
    *
    * Falls back to the table when the entry arrives as a bare number: a snapshot
@@ -139,8 +136,39 @@ export class Evc04Client extends VestelModbus {
   static stateWord(snapshot, key) {
     const entry = snapshot?.[key];
     if (entry === null || entry === undefined) return null;
-    if (typeof entry === 'object') return entry.word ?? null;
+    if (isStateEntry(entry)) return entry.word ?? null;
     return STATE_TABLES[key]?.[entry] ?? null;
+  }
+
+  /**
+   * A bare reading out of the snapshot, or null when it was NOT READ.
+   *
+   * WHAT NULL MEANS HERE, AND WHY 0 IS NOT NULL
+   * `null` means the device did not answer, and only that. A reading of 0 is a
+   * reading: register 1500 answers 0 whenever no charging session is running, and
+   * register 1008 answers 0 while a car draws nothing. Turning either into `null`
+   * drops a feature that the device really reported, and it is what an earlier
+   * version did by testing the entry's shape before its value.
+   */
+  static reading(snapshot, key) {
+    const entry = snapshot?.[key];
+    if (entry === null || entry === undefined) return null;
+    if (isStateEntry(entry)) return entry.value ?? null;
+    return entry;
+  }
+
+  /**
+   * A state's NUMBER out of the snapshot, or null when it was not read.
+   *
+   * Kept separate from `reading()` on purpose: the two answer the same question for
+   * different shapes, and a call site that means "a state's code" must not be able
+   * to receive a measurement by accident.
+   */
+  static stateValue(snapshot, key) {
+    const entry = snapshot?.[key];
+    if (entry === null || entry === undefined) return null;
+    if (isStateEntry(entry)) return entry.value ?? null;
+    return STATE_TABLES[key] ? entry : null;
   }
 
   /**
@@ -151,7 +179,7 @@ export class Evc04Client extends VestelModbus {
    * ask for", not "how much do I want".
    *
    * THREE VALUES DECIDE THE CEILING, AND THE SMALLEST WINS
-   * `1104` is the device, `1106` the cable plugged into it, and `1500` the maximum
+   * `1104` is the device, `1106` the cable plugged into it, and `1100` the maximum
    * of the session that is running — a vehicle may ask for less than either. The
    * ceiling is the smallest of the three, so a setpoint can never be reported as
    * accepted while the car draws less.

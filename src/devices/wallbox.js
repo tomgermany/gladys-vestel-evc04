@@ -51,10 +51,16 @@
 // kilowatt-hour. Gladys stores amperes and kilowatt-hours, so both divisions happen
 // on the way in, in this file.
 //
-// ONLY ONE FEATURE IS WRITABLE, AND IT SAYS SO
-// `charging_current` is the single feature a user can set from Gladys. Everything
-// else — the limits, the states, the meter — is a reading. The device has no start
-// and no stop command, so there is nothing else TO write.
+// THE FEATURE `charging_current` PUBLISHES THE DEVICE'S REPORT, NOT A WISH
+// It reads register 1500 — tenths of an ampere, scaled by 1/10 — so the number in
+// Gladys is what the wallbox says it is delivering, including the 6.5 A a car or a
+// cable may ask for. The setpoint this integration writes lives in register 5004 and
+// is a different number; the card prints it separately, from the heartbeat state.
+//
+// ONLY ONE FEATURE IS RULED BY THE USER, AND IT SAYS SO
+// `charging_current` is the single feature the user can influence from Gladys.
+// Everything else — the limits, the states, the meter — is a reading. The device has
+// no start and no stop command, so there is nothing else TO write.
 //
 // THE DEVICE IS POLLED, AND THE RATE COMES FROM THE CONFIGURATION
 // `should_poll: true` alone is not enough: the SDK states that Gladys schedules a
@@ -116,9 +122,7 @@ const CAT_ENERGY = CAT.ENERGY_SENSOR;
  *   as      : 'sentence' | 'state' | 'number' — see the note at the top.
  *   scale   : applied on the way in; keep it in step with `unit` or the numbers lie.
  *   writable: true when the user can set it from Gladys.
- *   bounds  : the row whose min/max follow the DEVICE's own limits. Only
- *             `charging_current` has it: it is the one feature a user can move, and
- *             the only one whose range the wallbox gets a say in.
+ *   bounds  : the row whose min/max follow the DEVICE's own limits.
  */
 export const FEATURES = [
   // --- What the wallbox is doing, as the sentence a user reads ---
@@ -258,13 +262,13 @@ export const FEATURES = [
   },
 
   // --- The control ---
-  // The charging current is the only thing this integration sets, because it is the
-  // only thing the device can be told. It overrides what the wallbox would do on its
-  // own, and the heartbeat in src/alive.js is what keeps it in force.
+  // The charging current is the only thing this integration steers, because it is
+  // the only thing the device can be told. It overrides what the wallbox would do on
+  // its own, and the heartbeat in src/alive.js is what keeps it in force.
   //
-  // `bounds: true` means the min and max below are only what stands in BEFORE the
-  // device has answered; a caller that read the wallbox's limits overrides them. This
-  // is what keeps the slider from offering a current the wallbox ignores.
+  // The source is the DEVICE'S REPORT (register 1500, tenths of an ampere), not the
+  // setpoint we wrote. The tile therefore shows what is really there, and the slider
+  // range comes from the wallbox's own limits.
   {
     key: 'charging_current',
     name: 'Ladestrom',
@@ -273,7 +277,8 @@ export const FEATURES = [
     category: CAT_ENERGY,
     type: CURRENT,
     unit: UNIT.AMPERE,
-    scale: 1,
+    // Register 1500 counts tenths of an ampere.
+    scale: 1 / 10,
     min: DEFAULT_MIN_CURRENT,
     max: DEFAULT_MAX_CURRENT,
     bounds: true,
@@ -314,18 +319,20 @@ export function deviceExternalId(gladys, device) {
  *   'state'    — the state's NUMBER
  *   'number'   — the bare reading, scaled if the device reports another unit
  *
- * Answering null leaves the feature out of the publication entirely, which is what
- * keeps a missing reading from being written as a zero. An object where a number is
- * expected is also null: the `{ value, word }` entries are only ever reached through
- * the two state branches.
+ * THE SHAPE IS DECIDED BY THE ROW, NEVER BY A `typeof` GUESS
+ * A state row goes through `stateValue`, which knows that its entry is
+ * `{ value, word }`; a reading row goes through `Evc04Client.reading`, which knows
+ * that its entry is a bare number. Testing the entry's shape here instead is what
+ * turned register 1500 — a genuine reading of 0 when no session is running — into
+ * `null`, because `0` was mistaken for "nothing was read".
  */
 export function featureValue(feature, snapshot) {
   if (feature.as === 'sentence') {
     if (feature.source === 'chargepoint_state') {
       return deviceSentence({
         word: Evc04Client.stateWord(snapshot, 'chargepoint_state'),
-        power: snapshot?.power ?? null,
-        faultCode: snapshot?.fault_code ?? null,
+        power: Evc04Client.reading(snapshot, 'power'),
+        faultCode: Evc04Client.reading(snapshot, 'fault_code'),
       });
     }
     return cableSentence({ word: Evc04Client.stateWord(snapshot, 'cable_state') });
@@ -335,8 +342,8 @@ export function featureValue(feature, snapshot) {
     return Evc04Client.stateValue(snapshot, feature.source);
   }
 
-  const raw = snapshot?.[feature.source];
-  if (raw === undefined || raw === null || typeof raw === 'object') return null;
+  const raw = Evc04Client.reading(snapshot, feature.source);
+  if (raw === null || raw === undefined) return null;
   if (feature.scale === undefined || feature.scale === 1) return raw;
   return Math.round(raw * feature.scale * 10000) / 10000;
 }
@@ -345,10 +352,7 @@ export function featureValue(feature, snapshot) {
  * The range a feature is offered with.
  *
  * A row marked `bounds` follows the DEVICE's own limits when the caller read them,
- * and falls back to the row's constants when it did not. Those constants are the
- * smallest figures that make sense for a home charge point, not a generous guess: a
- * ceiling that is too high is a value the wallbox silently ignores, and the user
- * reads a number that is not true.
+ * and falls back to the row's constants when it did not.
  */
 export function featureBounds(feature, limits) {
   const min = Number(limits?.min);
@@ -370,7 +374,7 @@ export function featureBounds(feature, limits) {
  *
  * `limits` are the figures the WALLBOX reported for `1102`, `1104`, `1106` and
  * `1100` — see Evc04Client.readLimits(). They decide the slider range of the one
- * writable feature. Passing nothing is not an error: a device that does not answer
+ * controlled feature. Passing nothing is not an error: a device that does not answer
  * those registers keeps the fallbacks.
  */
 export function buildDevice(gladys, device, snapshot, pollFrequency, limits = null) {

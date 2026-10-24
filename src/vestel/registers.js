@@ -45,6 +45,41 @@
 // The specification states every unit outright — mA, V, W, 0.1 kWh, Wh, A — so
 // nothing here needs a factor register. That is the main difference from a SunSpec
 // device, and the reason this map is much shorter than the WattWächter's.
+//
+// THREE CURRENTS, AND WHY CONFUSING TWO OF THEM IS THE EASY MISTAKE
+// This device names three different currents, and two of them share the printed
+// name `Charging Current`. They are not interchangeable:
+//
+//   5004  `Charging Current`, uint16, AMPERES, READ/WRITE.
+//         The SETPOINT: what the vehicle is allowed to draw. Written, never read
+//         into the snapshot.
+//
+//   1008  `Current L1`, uint16, MILLIAMPERES, READ ONLY.
+//         The MEASUREMENT: what is really flowing on phase 1. 16000 means 16 A.
+//
+//   1500  `Charging Current`, uint16, TENTHS OF AN AMPERE, READ ONLY.
+//         The report of the running session: 130 means 13 A. This is the number a
+//         user compares a setpoint against, because it is the figure the wallbox
+//         itself believes it is delivering.
+//
+// The poll plan reads 1008 and 1500; only 5004 is written. An earlier version read
+// 5066 for the reported current, which is not an address of this device at all.
+//
+// CHECKED AGAINST THE REVISION LIST
+// The specification's own revision history was read for the registers that changed
+// meaning, because a table is only as good as the version it describes:
+//
+//   v1.2  ChargePointState, the alive register, charging state, equipment state;
+//   v1.3  `EVSE Fault Code` (1006) widened uint16 -> uint32, so it spans two
+//         registers — a one-register read of it returns half a number;
+//   v1.4  `Session Max Current` (1100), `EVSE Min Current` (1102), `EVSE Max
+//         Current` (1104) and `Cable Max Current` (1106) changed UNIT to amperes.
+//
+// WHAT THE TABLE PRINTS TWICE, AND WHAT THAT COSTS
+// `Charging Current` appears twice in the v1.5 table: once as the writable setpoint
+// at 5004, and once as the tenths-of-an-ampere report at 1500. Both are real
+// registers. The second one is reached through `SESSION`, and the shared name is
+// exactly why both are spelled out above rather than left to the reader.
 // -----------------------------------------------------------------------------
 
 /**
@@ -174,9 +209,18 @@ export const READ_ONLY = {
   session_max_current: 1100,
 };
 
-/** The session registers, read for the triggers and the card. */
+/**
+ * The session registers, read for the triggers and the card.
+ *
+ * `current` is the reported current of the running session, in TENTHS OF AN AMPERE:
+ * 130 is 13 A. It is NOT the setpoint — that is `CONTROL.charging_current` (5004),
+ * in amperes. It sits between the energy and the duration because that is where the
+ * manufacturer's table prints it, and a block read out of order is how the wrong
+ * register gets documented for the next person.
+ */
 export const SESSION = {
   max_current: 1100,
+  current: 1500,
   energy: { address: 1502, count: 2 }, // Wh
   start_time: { address: 1504, count: 2 },
   duration: { address: 1508, count: 2 }, // s
@@ -204,7 +248,7 @@ export const FAILSAFE = {
 /**
  * Where the charging current is written.
  *
- * `Dynamic charging current`, uint16, amperes. This is the ONLY register that
+ * `Dynamic charging current`, uint16, AMPERES. This is the ONLY register that
  * steers a charge — the device has no start and no stop command.
  */
 export const CONTROL = {
@@ -275,6 +319,23 @@ export const EQUIPMENT_STATE = {
 };
 
 /**
+ * The reported charging current as whole amperes.
+ *
+ * Register 1500 counts TENTHS of an ampere, so 130 is 13 A. The device also reports
+ * 65 for the 6.5 A a car or a cable may ask for, which is why the raw reading stays
+ * raw in the snapshot and the rounding happens where a whole ampere is required —
+ * see `rawAmps()` in src/widgets.js.
+ *
+ * A reading of 0 means "no session", not "zero amperes are allowed": a setpoint is
+ * a whole number of amperes, so a base of 0 would clamp every tap to the 6 A floor
+ * while looking perfectly healthy.
+ */
+export function sessionAmps(raw) {
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return raw / 10;
+}
+
+/**
  * Everything read on a poll, with how to read it.
  *
  * `kind` is what the reader does with the address:
@@ -288,12 +349,21 @@ export const EQUIPMENT_STATE = {
  * The number is what a feature is published with; the word is what the card's
  * sentence is built from. Both come from the table beside the address, so neither is
  * derived from the other by guessing.
+ *
+ * WHY `charging_current` IS IN THIS PLAN
+ * It is the ONE feature this integration steers, and a controlled value whose
+ * reading is never taken is a slider that shows whatever was last asked for. Reading
+ * register 1500 gives the card a number the wallbox stands behind, and it is what the
+ * two dashboard buttons step from. Without this row the key was absent from every
+ * snapshot, the buttons had nothing to start from, and every tap fell back to the
+ * 6 A floor. That was a real failure, not a cosmetic one.
  */
 export const POLL_PLAN = [
   { key: 'chargepoint_state', kind: 'state', address: STATE.chargepoint, table: CHARGEPOINT_STATE },
   { key: 'charging_state', kind: 'uint16', address: STATE.charging },
   { key: 'equipment_state', kind: 'state', address: STATE.equipment, table: EQUIPMENT_STATE },
   { key: 'cable_state', kind: 'state', address: STATE.cable, table: CABLE_STATE },
+  { key: 'charging_current', kind: 'uint16', address: SESSION.current, unit: '0.1A' },
   { key: 'current_l1', kind: 'uint16', address: METER.current_l1, unit: 'mA' },
   { key: 'current_l2', kind: 'uint16', address: METER.current_l2, unit: 'mA' },
   { key: 'current_l3', kind: 'uint16', address: METER.current_l3, unit: 'mA' },
