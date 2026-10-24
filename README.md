@@ -2,6 +2,13 @@
 
 Externe [Gladys Assistant](https://gladysassistant.com/)-Integration für die **Vestel EVC04 Home**. Sie liest Messwerte aus und steuert den erlaubten Ladestrom über **Modbus TCP** – vollständig lokal, ohne Hersteller-Cloud, OCPP-Backend oder Benutzerkonto.
 
+## Dokumentation
+
+- [English](docs/en.md)
+- [Français](docs/fr.md)
+- [Deutsch](docs/de.md)
+- [Español](docs/es.md)
+
 ## Funktionen
 
 - Wallbox als Gerät in Gladys entdecken und Messwerte veröffentlichen.
@@ -93,6 +100,12 @@ Wichtige Dateien:
 - `src/scenes.js` – Szenenereignisse und Ladestrom-Aktion.
 - `src/alive.js` – Heartbeat für die aktive Ladestromsteuerung.
 - `src/config.js` – Standardwerte und Normalisierung der Konfiguration.
+
+## Hinweis zu Marken und Hersteller
+
+Dies ist eine unabhängige Community-Integration für Gladys Assistant. Sie wird weder von Vestel entwickelt noch unterstützt oder offiziell freigegeben. **Vestel** und **EVC04** sind Bezeichnungen des jeweiligen Herstellers. Marken, Logos und Produktdarstellungen gehören ihren jeweiligen Rechteinhabern; ihre Nennung dient ausschließlich der Identifikation des unterstützten Produkts.
+
+Weitere Informationen zum Hersteller und zur EVC04-Serie findest du auf der [offiziellen Vestel-eCharger-Website](https://www.vestel-echarger.com/).
 
 ## Lizenz
 
