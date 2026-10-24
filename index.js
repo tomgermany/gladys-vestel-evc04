@@ -42,9 +42,6 @@ const gladys = new GladysIntegration();
  * `applyConfig()` therefore never ran — leaving the client on the `host: ''` of the
  * defaults. The container then dialled `:502:` while the user's address sat correctly
  * filled in on the Configuration screen.
- *
- * So: defaults here, real configuration in the `connected` handler below, and
- * `connect()` last.
  */
 let config = normalizeConfig(DEFAULT_CONFIG);
 
@@ -120,14 +117,20 @@ async function poll() {
 }
 
 /**
- * Which devices this integration offers, when Gladys asks.
+ * Read the wallbox and offer it to Gladys.
  *
- * The callback answers with the list of devices. A discovery that answers nothing is
- * one the user cannot act on, so this reads the identity block and then offers one
- * wallbox. If the address is wrong, the error is the one from the connection — which
- * names host and port, and is the message a user needs.
+ * THE DISCOVERY IS PUBLISHED, NOT RETURNED
+ * `onScanRequest` has the signature `() => void | Promise<void>`: the callback
+ * answers by calling `publishDiscoveredDevices(devices)`, and anything it RETURNS is
+ * read by nobody. An earlier version collected the device and returned it as the
+ * value of the callback — the call was accepted, the return value dropped, and the
+ * Discovery screen stayed empty no matter how well the wallbox answered.
+ *
+ * The published list REPLACES the previous one, so this sends exactly one device:
+ * this integration controls one charge point, and a stale second entry would be an
+ * offer the user cannot act on.
  */
-gladys.onScanRequest(async () => {
+async function publishDiscovery() {
   const info = await client.connect();
   deviceInfo = {
     serial: info.serial || null,
@@ -136,13 +139,27 @@ gladys.onScanRequest(async () => {
     host: config.host,
   };
   const limits = await client.readLimits().catch(() => null);
-  return buildDevice(gladys, deviceInfo, await client.readAll(), config.poll_frequency, limits);
+  const snapshotNow = await client.readAll();
+  await gladys.publishDiscoveredDevices([
+    buildDevice(gladys, deviceInfo, snapshotNow, config.poll_frequency, limits),
+  ]);
+}
+
+gladys.onScanRequest(async () => {
+  await publishDiscovery();
 });
 
-/** One poll, on the rate the user chose. */
+/**
+ * One poll, asked for by the Gladys scheduler.
+ *
+ * The callback receives the DEVICE and answers with nothing: what the user sees is
+ * published through `publishStates`, not through a return value. Returning
+ * `{ should_poll, poll_frequency }` was harmless — the value is ignored — but it read
+ * as if the poll's answer were the return, which is exactly the confusion that made
+ * the discovery above silent.
+ */
 gladys.onPoll(async () => {
   await poll();
-  return { should_poll: true, poll_frequency: config.poll_frequency };
 });
 
 /**
@@ -163,7 +180,6 @@ gladys.onSetValue(async (device, deviceFeature, value) => {
   await client.writeRegister(CONTROL.charging_current, current);
   control.set(current);
   await poll();
-  return { toast: t('control', current) };
 });
 
 /**
@@ -253,8 +269,8 @@ gladys.handleShutdown(async () => {
 });
 
 /**
- * Every (re)connection: fetch the configuration the user filled in, apply it, and
- * report whether the wallbox answers.
+ * Every (re)connection: fetch the configuration the user filled in, apply it, offer
+ * the device, and report whether the wallbox answers.
  *
  * WHY THIS IS A CONNECTED HANDLER AND NOT A LINE IN A main()
  * `getConfig()` needs an authenticated connection, so it cannot run before
@@ -266,7 +282,13 @@ gladys.on('connected', async () => {
   try {
     config = normalizeConfig(await gladys.getConfig());
     await applyConfig(config);
-    log.info(`Vestel EVC04 Integration bereit (${config.host || 'keine Adresse'}).`);
+    if (!config.host) {
+      log.warn('Keine Adresse in der Konfiguration eingetragen — nichts zu verbinden.');
+      return;
+    }
+    log.info(`Vestel EVC04 Integration bereit (${config.host}).`);
+    await publishDiscovery();
+    await poll();
     await reportConnection();
   } catch (err) {
     log.error('Konfiguration konnte nicht angewendet werden', err);
