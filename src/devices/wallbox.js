@@ -8,14 +8,31 @@
 // be one Gladys knows: an unknown category is not a warning, it is a refusal of
 // the WHOLE device.
 //
-// THE TEXT FEATURE THAT WAS ONE, AND WHAT IT COST
-// The charge state and the cable state were published as TEXT features at first,
-// and Gladys refused them with:
-//   Could not publish Kabelzustand: states[0]: must have a numeric "state" or a
-//   string "text"
-// The value was a bare string, which the validation does not accept — and because
-// the state was refused, the device stayed half-populated on every poll. Both are
-// published as NUMBERS now, with the word kept for the sentence on the card.
+// TWO KINDS OF FEATURE, AND WHY THEY ARE NOT INTERCHANGEABLE
+// A READING (energy-sensor, type power/voltage/current/index) is published as a
+// bare NUMBER. A STATE is not: Gladys validates its value and answers
+//   states[0]: must have a numeric "state" or a string "text"
+// when it gets anything else. What that message means, read from the core
+// (server/lib/external-integration/externalIntegration.saveStates.js):
+//
+//   const hasNumericState = typeof state.state === 'number' && Number.isFinite(state.state);
+//   const hasText = typeof state.text === 'string';
+//   if (!hasNumericState && !hasText) throw new BadParameters(...)
+//
+// So a state value must be an OBJECT — { state: 2 } or { text: '...' } — and the
+// SDK types it exactly that way in DeviceState. That is the mistake this file made
+// twice: first a bare string, then a bare number. Both were refused, and a refused
+// state leaves the device half-populated on every poll — the log showed 8 features
+// instead of 14.
+//
+// WHICH SHAPE THIS FILE USES FOR A STATE
+// TEXT, because the sentence a user reads is already built in src/labels.js, and a
+// text feature is the one that stores strings — server/utils/device.js:
+//
+//   isStringStateFeature: category TEXT with type TEXT or SELECT
+//
+// The NUMBER stays alongside as its own reading, so a scene can compare on it. The
+// word is the card's business; the number is the machine's.
 //
 // WHICH FEATURES EXIST IS DECIDED BY THE DEVICE
 // The builder only makes a feature for a key the wallbox really answered. A
@@ -24,14 +41,23 @@
 //
 // UNITS ARE CONVERTED ONCE, HERE
 // The device reports current in milliamperes and the meter reading in tenths of a
-// kilowatt-hour. Gladys stores amperes and kilowatt-hours, so both divisions
-// happen on the way in — in this file, so a scene and the interface cannot
-// disagree about the unit of the same number.
+// kilowatt-hour. Gladys stores amperes and kilowatt-hours, so both divisions happen
+// on the way in — in this file, so a scene and the interface cannot disagree about
+// the unit of the same number.
 //
 // ONLY ONE FEATURE IS WRITABLE, AND IT SAYS SO
 // `charging_current` is the single feature a user can set from Gladys. Everything
 // else — the limits, the states, the meter — is a reading. The device has no start
 // and no stop command, so there is nothing else TO write.
+//
+// THE DEVICE IS POLLED, AND THE RATE IS DECLARED HERE
+// `should_poll: true` alone is not enough: the SDK states that Gladys schedules a
+// device only with BOTH `should_poll` and a `poll_frequency`, the latter in
+// MILLISECONDS and chosen from DEVICE_POLL_FREQUENCIES (1 s, 2 s, 10 s, 15 s,
+// 30 s, 1 min) — any other value is refused with a 400. Without it the device is
+// read once on connect and never again, which looks exactly like a broken
+// integration. The rate comes from the configuration, so the user's choice is what
+// Gladys is told.
 //
 // IT IS UNIT-TESTED WITHOUT A DEVICE: buildDevice() takes a plain snapshot, so the
 // tests hand it hand-written readings.
@@ -44,20 +70,22 @@ import {
   createLogger,
 } from '@gladysassistant/integration-sdk';
 import { DEFAULT_MIN_CURRENT, DEFAULT_MAX_CURRENT } from '../vestel/registers.js';
+import { deviceSentence, cableSentence } from '../labels.js';
 
 const logger = createLogger({ name: 'wallbox' });
 
 const POWER = TYPE.ENERGY?.POWER ?? 'power';
 const ENERGY = TYPE.ENERGY?.INDEX ?? 'index';
 const CURRENT = TYPE.ENERGY?.CURRENT ?? 'current';
+const TEXT = TYPE.TEXT?.TEXT ?? 'text';
 
 /**
- * The category of every reading here.
+ * The category of every energy reading here.
  *
- * `energy-sensor` is the category that carries a three-phase meter: power,
- * energy, voltage, current, index. It is the only energy category in this file on
- * purpose — a second one would have to be a category Gladys knows, and the whole
- * device is refused if it is not.
+ * `energy-sensor` is the category that carries a three-phase meter: power, energy,
+ * voltage, current, index. It is the only energy category in this file on purpose —
+ * a second one would have to be a category Gladys knows, and the whole device is
+ * refused if it is not.
  */
 const CAT_ENERGY = CAT.ENERGY_SENSOR;
 
@@ -65,20 +93,37 @@ const CAT_ENERGY = CAT.ENERGY_SENSOR;
  * One row per feature.
  *
  *   key     : the reading it carries, and the suffix of its external id. Never
- *             rename it: Gladys keys the history, the scenes and the dashboards
- *             on these ids.
- *   scale   : applied on the way in; keep it in step with `unit` or the numbers
- *             lie.
+ *             rename it: Gladys keys the history, the scenes and the dashboards on
+ *             these ids.
+ *   scale   : applied on the way in; keep it in step with `unit` or the numbers lie.
  *   writable: true when the user can set it from Gladys.
- *
- * A STATE IS A NUMBER, NOT A WORD
- * `chargepoint_state` and `cable_state` are published as plain numbers. The word
- * is what the CARD shows, built in src/labels.js; Gladys stores the number, which
- * is the only thing its validation accepts for a state. The unit is left out so the
- * interface shows the bare figure next to a name that says it is a code.
+ *   asText  : published as { text: ... } instead of { state: ... }, for the two
+ *             states. See the note at the top of this file.
  */
 export const FEATURES = [
-  // --- What the wallbox is doing ---
+  // --- What the wallbox is doing, as the sentence a user reads ---
+  {
+    key: 'charge_state',
+    name: 'Ladezustand',
+    category: CAT.TEXT,
+    type: TEXT,
+    asText: true,
+    keep_history: false,
+    writable: false,
+  },
+  {
+    key: 'cable_state',
+    name: 'Kabelzustand',
+    category: CAT.TEXT,
+    type: TEXT,
+    asText: true,
+    keep_history: false,
+    writable: false,
+  },
+
+  // --- The same two states as numbers, for a scene to compare on ---
+  // A text feature cannot be compared with a threshold, so the code stays available
+  // as its own reading. It carries no unit: a code is not a quantity.
   {
     key: 'chargepoint_state',
     name: 'Ladezustand (Code)',
@@ -89,7 +134,7 @@ export const FEATURES = [
     writable: false,
   },
   {
-    key: 'cable_state',
+    key: 'cable_code',
     name: 'Kabelzustand (Code)',
     category: CAT_ENERGY,
     type: POWER,
@@ -159,9 +204,9 @@ export const FEATURES = [
   { key: 'cable_max_current', name: 'Maximaler Ladestrom (Kabel)', category: CAT_ENERGY, type: CURRENT, unit: UNIT.AMPERE, scale: 1, writable: false },
 
   // --- The control ---
-  // The charging current is the only thing this integration sets, because it is
-  // the only thing the device can be told. It overrides what the wallbox would do
-  // on its own, and the heartbeat in src/alive.js is what keeps it in force.
+  // The charging current is the only thing this integration sets, because it is the
+  // only thing the device can be told. It overrides what the wallbox would do on
+  // its own, and the heartbeat in src/alive.js is what keeps it in force.
   //
   // The min and max here are only what a slider offers before the device has
   // answered; every write is clamped against the limits the WALLBOX reported, with
@@ -185,8 +230,8 @@ export const FEATURES = [
  *
  * Gladys keys history, scenes and dashboards on the external id, so it has to
  * survive a rename and stay unique when two charge points share an installation.
- * The serial is what the hardware reports; the host is only a fallback for a
- * device that answers nothing there.
+ * The serial is what the hardware reports; the host is only a fallback for a device
+ * that answers nothing there.
  */
 export const platformId = (device) => device.serial || device.host;
 
@@ -219,29 +264,61 @@ export function featureValue(feature, snapshot) {
  * A reading snapshot as the scene actions and the widget receive it.
  *
  * The snapshot holds the device's own names and units. What this adds is the one
- * thing every consumer wants: a flag that says whether energy is flowing right
- * now, which is also the value the two scene triggers watch.
+ * thing every consumer wants: a flag that says whether energy is flowing right now,
+ * which is also the value the two scene triggers watch.
+ *
+ * `cable_code` is copied from `cable_state` under the name the NUMBER feature uses,
+ * so a snapshot read from the device still carries both shapes without the reader
+ * having to know about the doubling.
  */
 export function decorate(snapshot = {}) {
   if (!snapshot || Object.keys(snapshot).length === 0) return snapshot;
   return {
     ...snapshot,
     charging: snapshot.charging_state === 1 ? 1 : 0,
+    cable_code: snapshot.cable_state ?? null,
   };
+}
+
+/**
+ * The value of the text features, which is the sentence and not the code.
+ *
+ * Kept apart from featureValue() because it takes the WHOLE snapshot: a state
+ * sentence is built from the state and, for a fault, the fault code beside it. An
+ * unknown or missing state answers null, and the feature is then left out — an
+ * empty box in the interface is worse than a missing one.
+ */
+export function featureText(feature, snapshot) {
+  if (feature.key === 'charge_state') {
+    const code = snapshot?.chargepoint_state;
+    if (code === null || code === undefined) return null;
+    return deviceSentence(snapshot);
+  }
+  if (feature.key === 'cable_state') {
+    const code = snapshot?.cable_state;
+    if (code === null || code === undefined) return null;
+    return cableSentence(snapshot);
+  }
+  return null;
 }
 
 /**
  * Build the discovery payload: "here is a wallbox, with these readings".
  *
- * Gladys creates nothing from this. It is an offer shown in the Discovery tab,
- * where the user clicks to create the device.
+ * Gladys creates nothing from this. It is an offer shown in the Discovery tab, where
+ * the user clicks to create the device.
+ *
+ * `pollFrequency` is the rate the user chose, in milliseconds, and one of the values
+ * Gladys accepts. It is passed in rather than fixed here, so the configuration screen
+ * is what decides how often the wallbox is read.
  */
-export function buildDevice(gladys, device, snapshot) {
+export function buildDevice(gladys, device, snapshot, pollFrequency) {
   const ids = gladys.externalIds(PLATFORM_TYPE, platformId(device));
   const features = [];
 
   for (const f of FEATURES) {
-    if (featureValue(f, snapshot) === null) continue;
+    const present = f.asText ? featureText(f, snapshot) !== null : featureValue(f, snapshot) !== null;
+    if (!present) continue;
     features.push({
       name: f.name,
       external_id: ids.feature(f.key),
@@ -261,18 +338,32 @@ export function buildDevice(gladys, device, snapshot) {
     external_id: ids.device,
     model: device.model,
     should_poll: true,
+    poll_frequency: pollFrequency,
     features,
   };
 }
 
-/** Publish the value of every feature from one snapshot. */
+/**
+ * Publish every feature from one snapshot.
+ *
+ * A reading goes out with `state`, a state goes out with `text`. Those are the two
+ * shapes Gladys validates against, and mixing them up is what left this device
+ * half-populated twice — see the note at the top of the file.
+ */
 export async function publishAll(gladys, device, snapshot) {
   const ids = gladys.externalIds(PLATFORM_TYPE, platformId(device));
   for (const f of FEATURES) {
-    const value = featureValue(f, snapshot);
-    if (value === null) continue;
+    const externalId = ids.feature(f.key);
     try {
-      await gladys.publishState(ids.feature(f.key), value);
+      if (f.asText) {
+        const text = featureText(f, snapshot);
+        if (text === null) continue;
+        await gladys.publishStates([{ device_feature_external_id: externalId, text }]);
+        continue;
+      }
+      const value = featureValue(f, snapshot);
+      if (value === null) continue;
+      await gladys.publishStates([{ device_feature_external_id: externalId, state: value }]);
     } catch (err) {
       // One refused reading must not stop the others.
       logger.warn(`Could not publish ${f.name}: ${err.message}`);
