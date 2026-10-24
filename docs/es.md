@@ -24,7 +24,7 @@ Configura la dirección IP o el nombre mDNS de la wallbox (sin `http://`), el pu
 | Dirección de la wallbox | — | Dirección IP o nombre mDNS |
 | Puerto Modbus | `502` | Cámbialo solo si la wallbox utiliza otro puerto |
 | Unit ID Modbus | `255` | Unit ID predeterminado de la EVC04 |
-| Intervalo de actualización | 5 minutos | Opciones: 1, 5, 15 o 60 minutos, además de 30 minutos |
+| Intervalo de actualización | 5 minutos | Opciones: 1, 5, 15, 30 o 60 minutos |
 | Plazo del heartbeat | 20 segundos | Se utiliza cuando el control de corriente está activo |
 
 Después de guardar la configuración, utiliza **Comprobar conexión** para probar la comunicación mediante la conexión existente.
