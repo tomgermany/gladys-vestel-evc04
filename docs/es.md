@@ -45,12 +45,18 @@ La integración configura la corriente permitida mediante el registro Modbus `50
 
 ## Escenas de Gladys
 
-La integración ofrece dos eventos:
+La integración ofrece **dos activadores de escena** y **una acción de escena**.
+
+### Activadores de escena
 
 - **Wallbox cargando** — se activa al entrar en el estado de carga.
 - **Carga de la wallbox finalizada** — se activa al salir de ese estado.
 
-Según el evento, hay variables disponibles como potencia, corriente de carga, lectura del contador, energía de la sesión y duración. Las escenas también pueden utilizar la acción **Establecer corriente de carga**.
+Según el activador, hay variables disponibles como potencia, corriente de carga, lectura del contador, energía de la sesión y duración.
+
+### Acción de escena
+
+- **Establecer corriente de carga** — permite que una escena establezca la corriente de carga deseada en amperios. El valor se limita a un mínimo de **6 A** y al máximo permitido por la wallbox y el cable.
 
 ## Solución de problemas
 
