@@ -35,7 +35,8 @@ const snapshot = {
   session_duration: 3600,
   evse_max_current: 16,
   cable_max_current: 16,
-  charging_current: 13,
+  // Register 1500 counts tenths of an ampere: 130 is 13 A.
+  charging_current: 130,
 };
 
 test('the manifest config defaults match DEFAULT_CONFIG', () => {
@@ -118,9 +119,9 @@ test('every select field offers options or a dynamic source', () => {
 
 // --- the snapshot shape ---
 // A state is stored as `{ value, word }` by the reader (src/vestel/client.js). These
-// two helpers are the ONLY way the rest of the code reaches a state, and getting the
-// shape wrong is what left the card saying "Zustand unbekannt." while the log said the
-// state had been read.
+// helpers are the ONLY way the rest of the code reaches a value, and getting the shape
+// wrong is what left the card saying "Zustand unbekannt." while the log said the state
+// had been read.
 
 test('a state comes back as its number and its word', () => {
   assert.equal(Evc04Client.stateValue(snapshot, 'chargepoint_state'), 0);
@@ -141,13 +142,35 @@ test('a missing state answers null and invents nothing', () => {
   assert.equal(Evc04Client.stateValue(snapshot, 'nothing_here'), null);
 });
 
-// --- the features against the snapshot ---
-// Every row names its source and its shape. Reading `snapshot[feature.key]` instead
-// answered undefined for three of the four state rows — `cable_code` reads
-// `cable_state`, and `charge_state` reads `chargepoint_state` — and undefined is
-// neither a number nor a text, which Gladys refuses outright.
+test('a reading of 0 is a reading, not a missing value', () => {
+  // Register 1500 answers 0 whenever no session is running, and register 1008 answers
+  // 0 while a car draws nothing. Both are readings the device really gave, and both
+  // must survive a shape test meant for states.
+  assert.equal(Evc04Client.reading(snapshot, 'current_l1'), 0);
+  assert.equal(Evc04Client.reading(snapshot, 'power'), 0);
+  assert.equal(Evc04Client.reading(snapshot, 'charging_current'), 130);
+});
 
-test('every feature finds its source in the snapshot', () => {
+// --- the one feature, against the snapshot ---
+// This device publishes ONE feature: the amperes the car is drawing. The tests that
+// used to sit here checked a sentence feature and two code features — all three were
+// removed when the feature list was cut to the ampere reading, and a test for a row
+// that no longer exists fails with `Cannot read properties of undefined`.
+//
+// WHAT IS CHECKED INSTEAD
+// The row that DOES exist, and the two things that decide whether it reaches Gladys:
+// its source is in the snapshot, and the tenths of an ampere become amperes exactly
+// once — here, and never a second time at a call site.
+
+test('the device publishes exactly one feature, and it is the current', () => {
+  assert.deepEqual(
+    FEATURES.map((f) => f.key),
+    ['charging_current'],
+    'the feature list is the ampere reading and nothing else',
+  );
+});
+
+test('the one feature finds its source in the snapshot', () => {
   for (const f of FEATURES) {
     assert.ok(f.source, `feature "${f.key}" names no source`);
     assert.ok(['number', 'state', 'sentence'].includes(f.as), `feature "${f.key}" has no shape`);
@@ -155,26 +178,17 @@ test('every feature finds its source in the snapshot', () => {
   }
 });
 
-test('the two sentences are the sentence, not the code', () => {
-  const charge = FEATURES.find((f) => f.key === 'charge_state');
-  const cable = FEATURES.find((f) => f.key === 'cable_state');
-  assert.equal(featureValue(charge, snapshot), t('state_available'));
-  assert.equal(featureValue(cable, snapshot), t('cable_unplugged'));
-});
-
-test('the two code features carry the number', () => {
-  const chargeCode = FEATURES.find((f) => f.key === 'chargepoint_state');
-  const cableCode = FEATURES.find((f) => f.key === 'cable_code');
-  assert.equal(featureValue(chargeCode, snapshot), 0);
-  assert.equal(featureValue(cableCode, snapshot), 0);
+test('the current is published in amperes, from a register in tenths', () => {
+  const current = FEATURES.find((f) => f.key === 'charging_current');
+  assert.equal(featureValue(current, snapshot), 13);
 });
 
 test('a missing reading leaves its feature out rather than writing a zero', () => {
+  // Nothing but the chargepoint state was read: the current has no source, so it is
+  // left out of the publication instead of being written as 0.
   const partial = { chargepoint_state: { value: 0, word: 'available' } };
-  const power = FEATURES.find((f) => f.key === 'power');
-  const charge = FEATURES.find((f) => f.key === 'charge_state');
-  assert.equal(featureValue(power, partial), null);
-  assert.equal(featureValue(charge, partial), t('state_available'));
+  const current = FEATURES.find((f) => f.key === 'charging_current');
+  assert.equal(featureValue(current, partial), null);
 });
 
 test('the device says it polls, and at the rate it was given', () => {
@@ -249,6 +263,11 @@ test('the kilowatt-hour conversion uses the step of the source register', () => 
 // `Object.keys(ACTION)` returns the identifiers on the LEFT of the definition —
 // `CURRENT_DOWN`, `CURRENT_UP` — and comparing those to the strings tested the wrong
 // half of the object.
+//
+// THE READINGS HERE ARE WHOLE AMPERES
+// The snapshot key is documented as amperes for this helper's callers, so a reading of
+// 16 is 16 A. The register counts tenths, and that division happens once, in the poll
+// plan's scale — never here. Getting that wrong clamped every tap to the 6 A floor.
 
 test('the widget carries exactly two action values, and neither of them releases', () => {
   assert.deepEqual(Object.values(ACTION).sort(), ['current_down', 'current_up']);
