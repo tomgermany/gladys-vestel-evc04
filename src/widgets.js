@@ -35,6 +35,15 @@
 // A tile with `device_feature` carries the external id of a published feature,
 // and Gladys reads that feature's own value and history. It therefore stays right
 // by itself and needs nothing from here.
+//
+// THE BUTTON TARGET COMES FROM THE SNAPSHOT, NOT FROM THE PUBLISHED FEATURE
+// `ids.charging_current` is "Ladestrom" — the feature the user sets, which has no
+// reading behind it until a setpoint is actually published. GATING THE BUTTONS ON
+// IT MEANT THE BUTTONS WERE ABSENT EXACTLY WHEN THEY WERE NEEDED: on a card where
+// nobody had set a current yet, there was nothing to tap to set the first one. The
+// buttons therefore follow `state.charging_current`, the reading of register 5066,
+// which is there from the first poll on. The tile above them keeps its own, correct
+// condition.
 // -----------------------------------------------------------------------------
 
 /** Widget key, as declared in the manifest `widgets` field. */
@@ -86,14 +95,13 @@ export function currentLabel(t, current) {
 }
 
 /**
- * @param {object} ctx
- * @param {object|null} ctx.state the last reading snapshot
- * @param {object|null} ctx.device { name, serial, model, host }
- * @param {object} ctx.ids { power, session_energy, meter_reading, charging_current }
- * @param {number|false|null} ctx.controlled the charging current we have set
- * @param {Function} ctx.t labels, per language
- * @param {Function} ctx.sentence state as one sentence, per language
+ * The snapshot key the current buttons move, and the one the tile shows.
+ *
+ * One name in one place: readLimits, the poll plan and the buttons all speak about
+ * the same register, and a second spelling of it is a second place to be wrong.
  */
+export const CURRENT_READING = 'charging_current';
+
 export function buildChargerContent({
   state,
   device,
@@ -186,7 +194,10 @@ export function buildChargerContent({
   // 6. The control: two buttons that move the charging current one ampere at a
   //    time, inside what the device and its cable allow. There is nothing else to
   //    steer on this device.
-  if (ids.charging_current) {
+  //
+  //    Gated on the READING, not on the published feature — see the note at the top
+  //    of this file. This is what makes the card usable on a fresh installation.
+  if (hasControl(state[CURRENT_READING])) {
     components.push({
       type: 'button',
       label: '− 1 A',
@@ -225,6 +236,14 @@ function stateColor(state) {
  * `step` moves the current from the value the user sees, not from a value
  * remembered somewhere else: two taps in a row then give two different currents.
  *
+ * WHAT THE FIELD NAMES ARE, AND WHY THAT IS A DECISION
+ * The snapshot holds `charging_current` — register 5066, in AMPERES, scaled by 0.1.
+ * This helper therefore returns the number AND the name it carries, so the caller
+ * can fold it into the snapshot under the right key. An earlier version returned
+ * `{ current }` and expected the caller to know where it goes; that is the kind of
+ * implicit contract that produced a card whose power tile read "kW" from a value
+ * that was never there.
+ *
  * THE CEILING IS OPTIONAL, AND THAT IS DELIBERATE
  * When the caller passes the limits it read from the device, a tap can never leave
  * the range the wallbox accepts. When it does not, the floor still applies and the
@@ -243,15 +262,34 @@ export function chargerAction({
     case ACTION.CURRENT_UP: {
       const step = Number(params?.step ?? CURRENT_STEP);
       const delta = actionKey === ACTION.CURRENT_UP ? step : -step;
-      const known = Number(state?.charging_current);
-      const base = Number.isFinite(known) && known > 0 ? known : MIN_CURRENT;
+      const known = rawAmps(state?.[CURRENT_READING]);
+      const base = Number.isFinite(known) ? known : MIN_CURRENT;
       const min = Math.max(MIN_CURRENT, Number(limits?.min) || MIN_CURRENT);
       const ceiling = Number(limits?.max);
       const max = Number.isFinite(ceiling) ? Math.max(min, ceiling) : Infinity;
       const next = Math.min(max, Math.max(min, Math.round(base + delta)));
-      return { current: next, toast: t('control', next) };
+      return { key: CURRENT_READING, current: next, toast: t('control', next) };
     }
     default:
       throw new Error(`Unknown widget action: ${actionKey}`);
   }
+}
+
+/**
+ * A current reading as whole amperes.
+ *
+ * The device reports register 5066 in tenths of an ampere, so 130 is 13 A and 65 is
+ * the 6.5 A a car or a cable may ask for. Two things follow, and both are needed:
+ *
+ *   - the figure the button starts from has to be rounded to whole amperes, because
+ *     a setpoint is written in whole amperes;
+ *   - a missing or unusable reading must not be read as 0. `Number(null)` is 0, and
+ *     a 0 base would clamp every tap to the 6 A floor while looking perfectly
+ *     healthy — that was a real bug in the WattWächter integration.
+ */
+export function rawAmps(value) {
+  const tenths = typeof value === 'object' && value !== null ? value.value : value;
+  const number = Number(tenths);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return Math.round(number) / 10;
 }
