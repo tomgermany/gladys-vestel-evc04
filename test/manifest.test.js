@@ -6,6 +6,8 @@ import { SCENE_ACTIONS, TRIGGER, chargingEvents, kilowattHours } from '../src/sc
 import { CHARGER_WIDGET, chargerAction, ACTION } from '../src/widgets.js';
 import { stateSentence, cableSentence, deviceSentence, t } from '../src/labels.js';
 import { CHARGEPOINT_STATE, CABLE_STATE } from '../src/vestel/registers.js';
+import { Evc04Client } from '../src/vestel/client.js';
+import { FEATURES, featureValue, buildDevice } from '../src/devices/wallbox.js';
 
 const manifest = JSON.parse(
   await readFile(new URL('../gladys-assistant-integration.json', import.meta.url), 'utf8'),
@@ -19,6 +21,22 @@ const allFields = [
   ...(manifest.scene_actions ?? []).flatMap((item) => item.fields ?? []),
   ...(manifest.widgets ?? []).flatMap((widget) => widget.settings ?? []),
 ];
+
+/** A snapshot as the reader produces it: a state is `{ value, word }`. */
+const snapshot = {
+  chargepoint_state: { value: 0, word: 'available' },
+  charging_state: 0,
+  equipment_state: { value: 1, word: 'running' },
+  cable_state: { value: 0, word: 'unplugged' },
+  current_l1: 0,
+  power: 0,
+  meter_reading: 123456,
+  session_energy: 4321,
+  session_duration: 3600,
+  evse_max_current: 16,
+  cable_max_current: 16,
+  charging_current: 13,
+};
 
 test('the manifest config defaults match DEFAULT_CONFIG', () => {
   for (const field of manifest.config_schema ?? []) {
@@ -54,19 +72,15 @@ test('every scene action in the code is declared in the manifest, and vice versa
   }
 });
 
-// --- the shape of this device -------------------------------------------------
+// --- the shape of this device ---
 // A wallbox has no start and no stop: a charge begins when the vehicle accepts the
-// current. These two tests hold that shape in place, because it is the kind of
-// thing an edit adds back without thinking — and a "release" action that writes a
-// number is not a release.
+// current. These hold that shape in place, because it is the kind of thing an edit
+// adds back without thinking — and a "release" action that writes a number is not a
+// release.
 
 test('the device offers exactly one scene action, and it sets the current', () => {
   assert.deepEqual(Object.keys(SCENE_ACTIONS), ['set_charging_current']);
-  assert.equal(
-    (manifest.scene_actions ?? []).length,
-    1,
-    'the manifest must declare exactly the one action this device can carry out',
-  );
+  assert.equal((manifest.scene_actions ?? []).length, 1);
 });
 
 test('there is no release action, in the code nor in the manifest', () => {
@@ -85,7 +99,7 @@ test('both triggers the code fires are declared', () => {
 
 test('the widget key has a handler in the code', () => {
   const declared = (manifest.widgets ?? []).map((widget) => widget.key);
-  assert.ok(declared.includes(CHARGER_WIDGET), `widget "${CHARGER_WIDGET}" is not declared`);
+  assert.ok(declared.includes(CHARGER_WIDGET));
   assert.equal(declared.length, 1);
 });
 
@@ -102,11 +116,81 @@ test('every select field offers options or a dynamic source', () => {
   }
 });
 
-// --- the two scene triggers --------------------------------------------------
-// "Started" and "finished" are the events a user builds automations on, and the
-// flank is what makes them usable: a scene bound to the VALUE rather than to the
-// change would fire on every poll for hours. These tests are what keeps that
-// promise from being quietly broken by an edit.
+// --- the snapshot shape ---
+// A state is stored as `{ value, word }` by the reader (src/vestel/client.js). These
+// two helpers are the ONLY way the rest of the code reaches a state, and getting the
+// shape wrong is what left the card saying "Zustand unbekannt." while the log said the
+// state had been read.
+
+test('a state comes back as its number and its word', () => {
+  assert.equal(Evc04Client.stateValue(snapshot, 'chargepoint_state'), 0);
+  assert.equal(Evc04Client.stateWord(snapshot, 'chargepoint_state'), 'available');
+  assert.equal(Evc04Client.stateWord(snapshot, 'cable_state'), 'unplugged');
+});
+
+test('a bare number still answers both, from the table', () => {
+  // A snapshot from an older reader must not lose its word: the table is the
+  // fallback, and without it a sentence would be built from nothing.
+  assert.equal(Evc04Client.stateValue({ chargepoint_state: 2 }, 'chargepoint_state'), 2);
+  assert.equal(Evc04Client.stateWord({ chargepoint_state: 2 }, 'chargepoint_state'), 'charging');
+});
+
+test('a missing state answers null and invents nothing', () => {
+  assert.equal(Evc04Client.stateValue({}, 'chargepoint_state'), null);
+  assert.equal(Evc04Client.stateWord({}, 'chargepoint_state'), null);
+  assert.equal(Evc04Client.stateValue(snapshot, 'nothing_here'), null);
+});
+
+// --- the features against the snapshot ---
+// Every row names its source and its shape. Reading `snapshot[feature.key]` instead
+// answered undefined for three of the four state rows — `cable_code` reads
+// `cable_state`, and `charge_state` reads `chargepoint_state` — and undefined is
+// neither a number nor a text, which Gladys refuses outright.
+
+test('every feature finds its source in the snapshot', () => {
+  for (const f of FEATURES) {
+    assert.ok(f.source, `feature "${f.key}" names no source`);
+    assert.ok(['number', 'state', 'sentence'].includes(f.as), `feature "${f.key}" has no shape`);
+    assert.notEqual(featureValue(f, snapshot), null, `feature "${f.key}" found nothing`);
+  }
+});
+
+test('the two sentences are the sentence, not the code', () => {
+  const charge = FEATURES.find((f) => f.key === 'charge_state');
+  const cable = FEATURES.find((f) => f.key === 'cable_state');
+  assert.equal(featureValue(charge, snapshot), t('state_available'));
+  assert.equal(featureValue(cable, snapshot), t('cable_unplugged'));
+});
+
+test('the two code features carry the number', () => {
+  const chargeCode = FEATURES.find((f) => f.key === 'chargepoint_state');
+  const cableCode = FEATURES.find((f) => f.key === 'cable_code');
+  assert.equal(featureValue(chargeCode, snapshot), 0);
+  assert.equal(featureValue(cableCode, snapshot), 0);
+});
+
+test('a missing reading leaves its feature out rather than writing a zero', () => {
+  const partial = { chargepoint_state: { value: 0, word: 'available' } };
+  const power = FEATURES.find((f) => f.key === 'power');
+  const charge = FEATURES.find((f) => f.key === 'charge_state');
+  assert.equal(featureValue(power, partial), null);
+  assert.equal(featureValue(charge, partial), t('state_available'));
+});
+
+test('the device says it polls, and at the rate it was given', () => {
+  const fakeGladys = {
+    externalIds: () => ({ device: 'ext:x:y', feature: (k) => `ext:x:y:${k}` }),
+  };
+  const device = buildDevice(fakeGladys, { serial: 'S1', model: 'M' }, snapshot, 30000);
+  assert.equal(device.should_poll, true);
+  assert.equal(device.poll_frequency, 30000);
+  assert.equal(device.features.length, FEATURES.length);
+});
+
+// --- the two scene triggers ---
+// "Started" and "finished" are the events a user builds automations on, and the flank
+// is what makes them usable: a scene bound to the VALUE rather than to the change
+// would fire on every poll for hours.
 
 test('the first reading fires nothing: after a restart the state is unknown', () => {
   const { events, side } = chargingEvents({ snapshot: { charging_state: 1 }, previous: null });
@@ -157,16 +241,14 @@ test('the kilowatt-hour conversion uses the step of the source register', () => 
   assert.equal(kilowattHours(undefined, 1), null);
 });
 
-// --- the widget buttons ------------------------------------------------------
-// The card returns an intention and the caller applies it. That split is only
-// worth anything if the intention itself is right, which is what these cover.
-// There are two buttons, and they are the only control this device has.
+// --- the widget buttons ---
+// The card returns an intention and the caller applies it. There are two buttons, and
+// they are the only control this device has.
 //
 // THE VALUES ARE COMPARED, NOT THE PROPERTY NAMES
 // `Object.keys(ACTION)` returns the identifiers on the LEFT of the definition —
-// `CURRENT_DOWN`, `CURRENT_UP` — and comparing those to the strings tested the
-// wrong half of the object. The left-hand names are ours to choose; the strings
-// are the contract a stored dashboard depends on, so those are what is checked.
+// `CURRENT_DOWN`, `CURRENT_UP` — and comparing those to the strings tested the wrong
+// half of the object.
 
 test('the widget carries exactly two action values, and neither of them releases', () => {
   assert.deepEqual(Object.values(ACTION).sort(), ['current_down', 'current_up']);
@@ -204,51 +286,49 @@ test('a tap can never leave the range the device reported', () => {
     state: { charging_current: 16 },
     limits: { min: 6, max: 16 },
   });
-  assert.equal(intent.current, 16, 'a tap above the ceiling must stay at the ceiling');
+  assert.equal(intent.current, 16);
 });
 
 test('an unknown action is refused rather than quietly ignored', () => {
   assert.throws(() => chargerAction({ actionKey: 'release' }), /Unknown widget action/);
 });
 
-// --- the labels --------------------------------------------------------------
-// `t()` falls back to the key itself, so a missing text is not a crash: it is the
-// literal key shown to the user. This caught exactly that once, in the
-// WattWächter integration.
-//
-// THE STATE ARRIVES AS A NUMBER AND THE TEXTS ARE KEYED BY WORD
-// The device's state is published as a number (see src/devices/wallbox.js) — the
-// only shape Gladys accepts for it — while the texts in src/labels.js are keyed by
-// word. Every state of the specification is therefore checked by its NUMBER, and
-// none of them may come back as the bare key. That is the check the first real
-// start failed: the card showed `state_0`.
+// --- the labels ---
+// The sentences take the state's WORD, which the reader produced. Every state of the
+// specification is therefore checked by its word, and none of them may come back as
+// the bare key. That is the check the first real start failed: the card showed
+// `state_0`.
 
-test('every state code the device can report has a sentence', () => {
-  for (const code of Object.keys(CHARGEPOINT_STATE)) {
-    const sentence = stateSentence({ chargepoint_state: Number(code) });
-    assert.notEqual(sentence, `state_${code}`, `no sentence for the state code ${code}`);
-    assert.ok(sentence.length > 5, `the sentence for ${code} is too short to be useful`);
+test('every state word the device can report has a sentence', () => {
+  for (const word of Object.values(CHARGEPOINT_STATE)) {
+    const sentence = stateSentence({ word });
+    assert.notEqual(sentence, `state_${word}`, `no sentence for the state "${word}"`);
+    assert.ok(sentence.length > 5, `the sentence for "${word}" is too short`);
   }
 });
 
-test('every cable code the device can report has a sentence', () => {
-  for (const code of Object.keys(CABLE_STATE)) {
-    const sentence = cableSentence({ cable_state: Number(code) });
-    assert.notEqual(sentence, `cable_${code}`, `no sentence for the cable code ${code}`);
-    assert.ok(sentence.length > 5, `the sentence for cable ${code} is too short`);
+test('every cable word the device can report has a sentence', () => {
+  for (const word of Object.values(CABLE_STATE)) {
+    const sentence = cableSentence({ word });
+    assert.notEqual(sentence, `cable_${word}`, `no sentence for the cable "${word}"`);
+    assert.ok(sentence.length > 5, `the sentence for cable "${word}" is too short`);
   }
 });
 
-test('an unknown state code says so instead of showing the key', () => {
-  assert.equal(stateSentence({ chargepoint_state: 42 }), t('state_unknown'));
-  assert.equal(cableSentence({ cable_state: 42 }), t('state_unknown'));
-  assert.equal(stateSentence({ chargepoint_state: null }), t('state_unknown'));
+test('an unknown or missing state says so instead of showing the key', () => {
+  assert.equal(stateSentence({ word: null }), t('state_unknown'));
+  assert.equal(cableSentence({ word: null }), t('state_unknown'));
 });
 
 test('the charging sentence names the power, and only that one does', () => {
-  const charging = deviceSentence({ chargepoint_state: 2, power: 11000 });
+  const charging = deviceSentence({ word: 'charging', power: 11000 });
   assert.match(charging, /11 kW/);
 
-  const available = deviceSentence({ chargepoint_state: 0, power: 0 });
+  const available = deviceSentence({ word: 'available', power: 0 });
   assert.equal(available, t('state_available'));
+});
+
+test('a fault sentence carries the fault code', () => {
+  const faulted = deviceSentence({ word: 'faulted', faultCode: 7 });
+  assert.match(faulted, /7/);
 });
