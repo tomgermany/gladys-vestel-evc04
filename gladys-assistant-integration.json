@@ -8,8 +8,8 @@
     "fr": "Pilote et surveille la borne Vestel EVC04 en Modbus TCP.",
     "es": "Controla y supervisa el cargador Vestel EVC04 por Modbus TCP."
   },
-  "version": "0.5.1",
-  "docker_image": "ghcr.io/tomgermany/gladys-vestel-evc04:0.5.1",
+  "version": "0.6.0",
+  "docker_image": "ghcr.io/tomgermany/gladys-vestel-evc04:0.6.0",
   "gladys_version": ">=5.1.0",
   "categories": [
     "energy"
@@ -158,13 +158,35 @@
         "es": "Cargador"
       },
       "description": {
-        "de": "Ladezustand in Worten, die aktuelle Ladeleistung und der gesetzte Ladestrom.",
-        "en": "Charging state in words, the current charging power and the set charging current.",
-        "fr": "L'état de charge en mots, la puissance en cours et le courant réglé.",
-        "es": "El estado de carga en palabras, la potencia actual y la corriente ajustada."
+        "de": "Ladezustand in Worten und der Ladestrom, mit Knöpfen zum Verstellen.",
+        "en": "Charging state in words and the charging current, with buttons to change it.",
+        "fr": "L'état de charge en mots et le courant de charge, avec des boutons pour le régler.",
+        "es": "El estado de carga en palabras y la corriente de carga, con botones para ajustarla."
       },
       "icon": "zap",
-      "action_timeout_seconds": 15
+      "settings": [
+        {
+          "key": "step",
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "min": 1,
+          "max": 5,
+          "label": {
+            "de": "Schrittweite der Knöpfe in A",
+            "en": "Button step in A",
+            "fr": "Pas des boutons en A",
+            "es": "Paso de los botones en A"
+          },
+          "description": {
+            "de": "Um wie viele Ampere ein Tipp auf + oder − den Ladestrom verschiebt. Erlaubt sind 1, 2 und 5.",
+            "en": "How many amperes one tap on + or − moves the charging current. Allowed: 1, 2 and 5.",
+            "fr": "De combien d'ampères un appui sur + ou − décale le courant. Autorisé : 1, 2 et 5.",
+            "es": "Cuántos amperios desplaza un toque en + o −. Permitido: 1, 2 y 5."
+          }
+        }
+      ],
+      "action_timeout_seconds": 30
     }
   ],
   "scene_triggers": [
