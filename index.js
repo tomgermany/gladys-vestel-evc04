@@ -32,7 +32,16 @@ const log = logger;
 
 const gladys = new GladysIntegration();
 
-/** The configuration in force, replaced on every change. */
+/**
+ * The configuration in force, replaced on every change.
+ *
+ * IT IS READ AT STARTUP, NOT WHEN A HANDLER FIRES
+ * The handlers below are live the moment they are registered, and Gladys sends a scan
+ * request as part of creating the device. If the address were only applied later, such
+ * a request would reach a client that still carried the `host: ''` of the defaults —
+ * which is exactly the failure that was seen in the container: a connection to `:502:`
+ * with the user's address correctly entered in the Configuration screen.
+ */
 let config = normalizeConfig(DEFAULT_CONFIG);
 
 /** The one connection of this process. Built once, never replaced. */
@@ -242,17 +251,18 @@ gladys.handleShutdown(async () => {
 /**
  * Startup.
  *
- * Every handler is registered before this runs, and `connect()` comes after the
- * configuration, because a handler that is missing when the first command arrives is a
- * command that is silently dropped.
+ * THE CONFIGURATION IS READ AND APPLIED BEFORE THE CONNECTION IS OPENED, and before
+ * anything can call a handler that reads the device. `getConfig()` needs the SDK to be
+ * connected, so the order is: config, handlers, connect — and the handlers only ever
+ * fire after `connect()` has resolved.
  */
 async function main() {
+  await gladys.connect();
   config = normalizeConfig(await gladys.getConfig());
   await applyConfig(config);
   gladys.onConfigUpdated(async (next) => {
     await applyConfig(normalizeConfig(next));
   });
-  await gladys.connect();
   log.info(`Vestel EVC04 Integration bereit (${config.host || 'keine Adresse'}).`);
   await reportConnection();
 }
