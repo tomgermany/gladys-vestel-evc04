@@ -95,52 +95,52 @@
         "es": "Frecuencia con la que se leen y publican las mediciones en Gladys. Elige un intervalo en minutos."
       },
       "options": [
-        {
-          "value": 1,
-          "label": {
-            "de": "1 Minute",
-            "en": "1 minute",
-            "fr": "1 minute",
-            "es": "1 minuto"
-          }
-        },
-        {
-          "value": 5,
-          "label": {
-            "de": "5 Minuten",
-            "en": "5 minutes",
-            "fr": "5 minutes",
-            "es": "5 minutos"
-          }
-        },
-        {
-          "value": 15,
-          "label": {
-            "de": "15 Minuten",
-            "en": "15 minutes",
-            "fr": "15 minutes",
-            "es": "15 minutos"
-          }
-        },
-        {
-          "value": 30,
-          "label": {
-            "de": "30 Minuten",
-            "en": "30 minutes",
-            "fr": "30 minutes",
-            "es": "30 minutos"
-          }
-        },
-        {
-          "value": 60,
-          "label": {
-            "de": "60 Minuten",
-            "en": "60 minutes",
-            "fr": "60 minutes",
-            "es": "60 minutos"
-          }
-        }
-      ]
+  {
+    "value": "1",
+    "label": {
+      "de": "1 Minute",
+      "en": "1 minute",
+      "fr": "1 minute",
+      "es": "1 minuto"
+    }
+  },
+  {
+    "value": "5",
+    "label": {
+      "de": "5 Minuten",
+      "en": "5 minutes",
+      "fr": "5 minutes",
+      "es": "5 minutos"
+    }
+  },
+  {
+    "value": "15",
+    "label": {
+      "de": "15 Minuten",
+      "en": "15 minutes",
+      "fr": "15 minutes",
+      "es": "15 minutos"
+    }
+  },
+  {
+    "value": "30",
+    "label": {
+      "de": "30 Minuten",
+      "en": "30 minutes",
+      "fr": "30 minutes",
+      "es": "30 minutos"
+    }
+  },
+  {
+    "value": "60",
+    "label": {
+      "de": "60 Minuten",
+      "en": "60 minutes",
+      "fr": "60 minutes",
+      "es": "60 minutos"
+    }
+  }
+]
     },
     {
       "key": "control_intro",
