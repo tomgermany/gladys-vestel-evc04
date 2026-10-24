@@ -72,7 +72,7 @@ let config = normalizeConfig(DEFAULT_CONFIG); // the user settings, re-read on e
 let client = null; // the Modbus connection, null while we have none
 let state = null; // last readings
 let device = null; // { host, serial, model, name }: the identity of the wallbox
-let lastRead = 0; // when the readings were taken, to honour poll_frequency
+let lastRead = 0; // when the readings were taken, to honour the configured interval
 let previousCharging = null; // the last charging flank, see chargingEvents()
 let connecting = null; // the connect attempt running right now, or null
 
@@ -257,7 +257,9 @@ async function withConnection(task) {
  */
 async function publishDevice() {
   if (!device || !state) return;
-  const payload = buildDevice(gladys, device, state, config.poll_frequency, device.limits);
+  // Gladys accepts scheduler frequencies only up to 60 seconds. Its one-minute
+  // ticks are used as a clock; refresh() skips ticks until the configured interval.
+  const payload = buildDevice(gladys, device, state, 60000, device.limits);
   logger.info(`publishDiscoveredDevices -> "${payload.name}" with ${payload.features.length} features`);
   for (const feature of payload.features) {
     logger.info(`  feature: ${feature.name} | ${feature.category}/${feature.type} | ${feature.unit}`);
@@ -312,7 +314,7 @@ gladys.onScanRequest(async () => {
 gladys.onPoll(async (polled) => {
   if (!client || !device) return;
   if (polled?.external_id !== deviceExternalId(gladys, device)) return;
-  if (Date.now() - lastRead < config.poll_frequency - 30000) return;
+  if (Date.now() - lastRead < config.poll_frequency - 60000) return;
   await refresh().catch((err) => logger.warn(`Poll failed: ${err.message}`));
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
 });
