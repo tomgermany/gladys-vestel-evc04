@@ -4,8 +4,8 @@ name: Release
 # The one button to press to publish a version.
 #
 # What it does, in this order:
-#   1. bump the version in package.json and in the manifest — both `version` and
-#      the tag inside `docker_image` — so the three always agree;
+#   1. bump the version in package.json and in the manifest; keep the manifest's
+#      docker_image on :latest so Gladys always follows the newest release;
 #   2. move the `## [Unreleased]` section of CHANGELOG.md under the new version;
 #   3. commit that, create the `vX.Y.Z` tag and push it;
 #   4. call Build, which produces the multi-arch image on ghcr.io;
@@ -13,10 +13,9 @@ name: Release
 #      notes — the Gladys supervision page links every version to it.
 #
 # WHY THE VERSION IS BUMPED IN THREE PLACES AND NEVER BY HAND
-# The indexer serves whatever the manifest says, and Gladys pulls whatever tag
-# the manifest names. A half-bumped version is not an error anyone sees: it is
-# simply the old version still being offered to every user. One workflow writing
-# all three removes that whole class of mistake.
+# The indexer serves the manifest version, while Gladys pulls the image tag named
+# by docker_image. The version therefore increments on every release, and the
+# stable :latest image tag follows the new release without manual changes.
 
 on:
   workflow_dispatch:

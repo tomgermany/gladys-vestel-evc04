@@ -9,7 +9,7 @@
     "es": "Controla y supervisa el cargador Vestel EVC04 por Modbus TCP."
   },
   "version": "0.6.2",
-  "docker_image": "ghcr.io/tomgermany/gladys-vestel-evc04:0.6.2",
+  "docker_image": "ghcr.io/tomgermany/gladys-vestel-evc04:latest",
   "gladys_version": ">=5.1.0",
   "categories": [
     "energy"
