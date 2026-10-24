@@ -9,17 +9,33 @@
 // Keeping that translation in one place is what lets registers.js change without
 // the widget or a scene noticing.
 //
+// A SNAPSHOT CARRIES TWO THINGS PER REGISTER: THE NUMBER AND THE WORD
+// Every entry of a `kind: 'state'` register is stored as
+//
+//   { value: 0, word: 'available' }
+//
+// and not as a bare word or a bare number. The reason is that the two are needed
+// by different consumers and must not be derived from each other by guessing:
+//
+//   - the NUMBER is what a feature is published with (a code is a number),
+//   - the WORD is what the sentence on the card is built from.
+//
+// Deriving the word from the sentence was the earlier mistake: the snapshot held
+// the word, `deviceSentence()` looked for a NUMBER, and the card said "Zustand
+// unbekannt." while the log said the state had been read. Keeping both, from the
+// one table in registers.js, is what makes that impossible.
+//
 // ONE SNAPSHOT PER POLL
-// `readAll()` walks the plan in registers.js and returns a flat object. A
+// `readAll()` walks the plan in registers.js and returns that flat object. A
 // reading the device does not answer is left OUT rather than reported as zero: a
 // wrong value in the history is worse than a missing one, and the device builder
 // makes a feature only for a key that is really there.
 //
 // READ AND WRITE ARE ASYMMETRIC ON PURPOSE
 // Reading is cheap and happens every poll. Writing happens when a scene or a
-// button asks for it, and every write is confirmed by the device echoing the
-// value back — see parseWriteAnswer. A write that did not land throws, so a
-// scene cannot believe it set a current it never set.
+// button asks for it, and every write is confirmed by the device echoing the value
+// back — see parseWriteAnswer. A write that did not land throws, so a scene cannot
+// believe it set a current it never set.
 // -----------------------------------------------------------------------------
 
 import { VestelModbus } from './modbus.js';
@@ -34,6 +50,13 @@ import {
   DEFAULT_MIN_CURRENT,
   DEFAULT_MAX_CURRENT,
 } from './registers.js';
+
+/** Every state table of this device, keyed by the register that uses it. */
+export const STATE_TABLES = {
+  chargepoint_state: CHARGEPOINT_STATE,
+  cable_state: CABLE_STATE,
+  equipment_state: EQUIPMENT_STATE,
+};
 
 export class Evc04Client extends VestelModbus {
   /**
@@ -59,14 +82,15 @@ export class Evc04Client extends VestelModbus {
    * Read every register of the poll plan into one flat snapshot.
    *
    * A path that does not answer is logged and skipped, so one dead register does
-   * not take the whole read down, and a model that reports three-phase values
-   * only sometimes simply has fewer keys.
+   * not take the whole read down, and a model that reports three-phase values only
+   * sometimes simply has fewer keys.
    */
   async readAll() {
     const snapshot = {};
     for (const entry of POLL_PLAN) {
       try {
-        snapshot[entry.key] = await this.readOne(entry);
+        const value = await this.readOne(entry);
+        if (value !== null && value !== undefined) snapshot[entry.key] = value;
       } catch (err) {
         this.warn?.(entry.key, err);
       }
@@ -74,43 +98,83 @@ export class Evc04Client extends VestelModbus {
     return snapshot;
   }
 
-  /** One entry of the poll plan, read according to its kind. */
+  /**
+   * One entry of the poll plan, read according to its kind.
+   *
+   * A state is answered as `{ value, word }` — the number for the feature, the
+   * word for the sentence. An unknown code keeps its number and gets no word, so
+   * the caller can say "unknown" without inventing one.
+   */
   async readOne(entry) {
     if (entry.kind === 'state') {
       const raw = await this.readOptionalUint16(entry.address);
       if (raw === null) return null;
-      return entry.table[raw] ?? `unknown_${raw}`;
+      const word = entry.table[raw];
+      return { value: raw, word: typeof word === 'string' ? word : null };
     }
     if (entry.kind === 'acc32') return this.readAcc32(entry.address);
     return this.readOptionalUint16(entry.address);
   }
 
   /**
+   * A state's NUMBER out of the snapshot, or null when it was not read.
+   *
+   * Exported as a helper because every consumer needs the same unwrapping, and a
+   * second implementation of it is a second place to get the shape wrong.
+   */
+  static stateValue(snapshot, key) {
+    const entry = snapshot?.[key];
+    if (entry === null || entry === undefined) return null;
+    if (typeof entry === 'object') return entry.value ?? null;
+    return entry;
+  }
+
+  /**
+   * A state's WORD out of the snapshot, or null when there is none.
+   *
+   * Falls back to the table when the entry arrives as a bare number: a snapshot
+   * built by an older reader would otherwise lose its word, and a sentence built
+   * without one is worse than a sentence built from the table.
+   */
+  static stateWord(snapshot, key) {
+    const entry = snapshot?.[key];
+    if (entry === null || entry === undefined) return null;
+    if (typeof entry === 'object') return entry.word ?? null;
+    return STATE_TABLES[key]?.[entry] ?? null;
+  }
+
+  /**
    * What the EVSE and the attached cable will accept, in amperes.
    *
    * READ, NEVER WRITTEN. These are the figures the installer set on the wallbox,
-   * and this integration respects them: the question they answer is "how much may
-   * I ask for", not "how much do I want".
+   * and this integration respects them: the question they answer is "how much may I
+   * ask for", not "how much do I want".
    *
-   * The smallest of them wins. A cable may be thinner than the EVSE, and a
-   * vehicle may ask for less than either. The device's own maximum (`1104`) is the
-   * one that matters for a setpoint: a scene asking for 16 A on a device set to
-   * 13 A is not an error the wallbox reports, it simply charges at 13 — and the
-   * clamp below is what keeps Gladys from claiming otherwise.
+   * THREE VALUES DECIDE THE CEILING, AND THE SMALLEST WINS
+   * `1104` is the device, `1106` the cable plugged into it, and `1500` the maximum
+   * of the session that is running — a vehicle may ask for less than either. The
+   * ceiling is the smallest of the three, so a setpoint can never be reported as
+   * accepted while the car draws less.
    *
-   * `session_max_current` is deliberately NOT part of the ceiling: it describes
-   * the session that is running, not what may be asked for, and using it would
-   * lower the limit with every charge.
+   * The floor is 6 A whatever `1102` says: on this device that register answers 0,
+   * which is a setpoint the wallbox refuses and no vehicle accepts. The figure
+   * comes from the manufacturer's app.
    */
   async readLimits() {
-    const [min, evseMax, cableMax] = await Promise.all([
+    const [min, evseMax, cableMax, sessionMax] = await Promise.all([
       this.readOptionalUint16(READ_ONLY.evse_min_current).catch(() => null),
       this.readOptionalUint16(READ_ONLY.evse_max_current).catch(() => null),
       this.readOptionalUint16(READ_ONLY.cable_max_current).catch(() => null),
+      this.readOptionalUint16(READ_ONLY.session_max_current).catch(() => null),
     ]);
-    const floor = min ?? DEFAULT_MIN_CURRENT;
-    const ceiling = Math.min(evseMax ?? DEFAULT_MAX_CURRENT, cableMax ?? DEFAULT_MAX_CURRENT);
-    this.limits = { min: floor, max: Math.max(floor, ceiling) };
+    const floor = DEFAULT_MIN_CURRENT;
+    const ceiling = Math.min(
+      evseMax ?? DEFAULT_MAX_CURRENT,
+      cableMax ?? DEFAULT_MAX_CURRENT,
+      sessionMax ?? DEFAULT_MAX_CURRENT,
+      DEFAULT_MAX_CURRENT,
+    );
+    this.limits = { min: floor, max: Math.max(floor, ceiling), reportedMin: min };
     return this.limits;
   }
 

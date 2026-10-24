@@ -13,9 +13,10 @@
 //   - port 502, unit id 255, and EXACTLY ONE master at a time (stated twice);
 //   - `Charging Current` (5004) is uint16 in AMPERES — this is the only register
 //     that steers a charge;
-//   - `EVSE Min Current` (1102), `EVSE Max Current` (1104) and `Cable Max Current`
-//     (1106) are uint16 in AMPERES, not in milliamperes;
-//   - spec v1.4 changed those three units to A, which is why an older reading of
+//   - `EVSE Min Current` (1102), `EVSE Max Current` (1104), `Cable Max Current`
+//     (1106) and `Session Max Current` (1100) are uint16 in AMPERES, not in
+//     milliamperes;
+//   - spec v1.4 changed those four units to A, which is why an older reading of
 //     this table shows different numbers;
 //   - `EVSE Fault Code` (1006) is uint32 since v1.3, so it spans two registers;
 //   - there is NO start and NO stop register. The device has no such command: a
@@ -158,16 +159,19 @@ export const METER = {
  *
  * Amperes, per specification v1.4. `evse_max_current` is the figure the installer
  * set on the device, and a setpoint above it is not refused — the wallbox simply
- * charges at its own maximum while Gladys would report the number it was asked
- * for. So every setpoint is clamped against these values.
+ * charges at its own maximum while Gladys would report the number it was asked for.
+ * So every setpoint is clamped against these values.
  *
- * `session_max_current` (1100) is deliberately NOT part of the ceiling: it
- * describes the session that is running, not what may be asked for.
+ * `session_max_current` belongs to the ceiling as well: it is the maximum of the
+ * session that is running, and a vehicle may ask for less than the device allows.
+ * Taking the smallest of the three is what keeps the number Gladys reports the
+ * number that is really in force.
  */
 export const READ_ONLY = {
   evse_min_current: 1102,
   evse_max_current: 1104,
   cable_max_current: 1106,
+  session_max_current: 1100,
 };
 
 /** The session registers, read for the triggers and the card. */
@@ -217,7 +221,7 @@ export const CONTROL = {
  * lowest setting, so 6 A is the floor here, whatever the register claims.
  *
  * THE CEILING IS A FALLBACK, NOT A CLAIM
- * It is used only when the device does not answer `1104` and `1106` at all. A
+ * It is used only when the device does not answer its limit registers at all. A
  * ceiling that is too high is not refused by the device — it charges at its own
  * maximum while Gladys reports what it was asked for.
  */
@@ -276,14 +280,14 @@ export const EQUIPMENT_STATE = {
  * `kind` is what the reader does with the address:
  *   'uint16'  one register, unsigned
  *   'acc32'   two registers, high word first, unsigned
- *   'state'   one register, kept as NUMBER and looked up in a named table
+ *   'state'   one register, kept as `{ value, word }` — see src/vestel/client.js
  * A reading the device does not provide is left OUT of the snapshot rather than
  * published as a zero: a wrong value in the history is worse than a missing one.
  *
- * WHY A STATE KEEPS ITS NUMBER
- * The word is for the sentence on the card and the log. Gladys stores the number,
- * because a text feature is the wrong shape for a state it has to compare — see
- * src/devices/wallbox.js for what that cost on the first real start.
+ * WHY A STATE KEEPS ITS NUMBER AND ITS WORD
+ * The number is what a feature is published with; the word is what the card's
+ * sentence is built from. Both come from the table beside the address, so neither is
+ * derived from the other by guessing.
  */
 export const POLL_PLAN = [
   { key: 'chargepoint_state', kind: 'state', address: STATE.chargepoint, table: CHARGEPOINT_STATE },
@@ -300,7 +304,7 @@ export const POLL_PLAN = [
   { key: 'meter_reading', kind: 'acc32', address: METER.meter_reading.address, unit: '0.1kWh' },
   { key: 'session_energy', kind: 'acc32', address: SESSION.energy.address, unit: 'Wh' },
   { key: 'session_duration', kind: 'acc32', address: SESSION.duration.address, unit: 's' },
-  { key: 'session_max_current', kind: 'uint16', address: SESSION.max_current, unit: 'A' },
+  { key: 'evse_max_current', kind: 'uint16', address: READ_ONLY.evse_max_current, unit: 'A' },
   { key: 'cable_max_current', kind: 'uint16', address: READ_ONLY.cable_max_current, unit: 'A' },
 ];
 
