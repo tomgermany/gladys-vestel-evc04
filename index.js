@@ -1,4 +1,4 @@
-import { GladysIntegration } from '@gladysassistant/integration-sdk';
+import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { DEFAULT_CONFIG, normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
 import { AliveControl } from './src/alive.js';
@@ -10,11 +10,25 @@ import { buildDevice, publishAll, PLATFORM_TYPE } from './src/devices/wallbox.js
 // about the tests, not a side effect of an import.
 import { buildChargerContent, CHARGER_WIDGET, CURRENT_READING } from './src/widgets.js';
 // `TRIGGER` is deliberately not imported here: the event keys come out of
-// `chargingEvents()` as `event.key`, so nothing in this file needs the trigger
-// names themselves. Importing them only produced an unused variable.
+// `chargingEvents()` as `event.key`, so nothing in this file needs the trigger names
+// themselves. Importing them only produced an unused variable.
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { t, deviceSentence } from './src/labels.js';
 import { CONTROL } from './src/vestel/registers.js';
+
+/**
+ * LOGGING: `logger`, NOT `gladys.log`
+ *
+ * The SDK exports a leveled logger as its own export (`logger`, or a named one from
+ * `createLogger({ name })`); `debug`/`info` go to stdout and `warn`/`error` to
+ * stderr, and the Gladys supervisor captures both.
+ *
+ * `gladys.log(...)` DOES NOT EXIST. An earlier version of this file called it four
+ * times, including in the `catch` of main() — so the container died while trying to
+ * report a failure, and the failure itself was never printed. That is the reason the
+ * installation failed "without an error message": the message was what crashed.
+ */
+const log = logger;
 
 const gladys = new GladysIntegration();
 
@@ -31,7 +45,7 @@ const client = new Evc04Client({
 /** The heartbeat. Its `write` goes through the same connection as everything else. */
 const control = new AliveControl({
   write: (register, value) => client.writeRegister(register, value),
-  log: (message) => gladys.log(message),
+  log: (message) => log.warn(message),
 });
 
 /**
@@ -53,9 +67,9 @@ function deviceIds() {
 /**
  * Point the connection at the configured address.
  *
- * A host change cannot be applied to a live socket, so the old one is closed first
- * — and the close is awaited. With a single allowed master, a socket left behind
- * can keep the wallbox from answering the next start.
+ * A host change cannot be applied to a live socket, so the old one is closed first —
+ * and the close is awaited. With a single allowed master, a socket left behind can
+ * keep the wallbox from answering the next start.
  */
 async function applyConfig(next) {
   config = next;
@@ -74,9 +88,9 @@ async function applyConfig(next) {
 /**
  * Read the device once and bring everything up to date.
  *
- * THE ORDER MATTERS: the events are worked out from the reading BEFORE the reading
- * is published, so a scene that reacts to "charging started" reads the figures of
- * the session that just started rather than the one before it.
+ * THE ORDER MATTERS: the events are worked out from the reading BEFORE the reading is
+ * published, so a scene that reacts to "charging started" reads the figures of the
+ * session that just started rather than the one before it.
  */
 async function poll() {
   const reading = await client.readAll();
@@ -95,11 +109,10 @@ async function poll() {
 /**
  * Which devices this integration offers, when Gladys asks.
  *
- * The callback receives the scan request and answers with the list of devices. A
- * discovery that answers nothing is one the user cannot act on, so this reads the
- * identity block and then offers one wallbox. If the address is wrong, the error is
- * the one from the connection — which names host and port, and is the message a user
- * needs.
+ * The callback answers with the list of devices. A discovery that answers nothing is
+ * one the user cannot act on, so this reads the identity block and then offers one
+ * wallbox. If the address is wrong, the error is the one from the connection — which
+ * names host and port, and is the message a user needs.
  */
 gladys.onScanRequest(async () => {
   const info = await client.connect();
@@ -194,9 +207,9 @@ gladys.onSceneAction('set_charging_current', async (fields) => {
 /**
  * The connection status in the Configuration screen.
  *
- * A wallbox that does not answer is not a broken integration: the container is up
- * and only the device is unreachable, which is exactly what a user needs told. The
- * call is best effort — losing the status line must not stop startup.
+ * A wallbox that does not answer is not a broken integration: the container is up and
+ * only the device is unreachable, which is exactly what a user needs told. The call is
+ * best effort — losing the status line must not stop startup.
  */
 async function reportConnection() {
   try {
@@ -215,23 +228,23 @@ async function reportConnection() {
  *
  * `handleShutdown` is the SDK's own path: it runs this cleanup, disconnects cleanly
  * and exits. The heartbeat is stopped first, so no write can be in flight, and the
- * socket is then closed AND WAITED FOR — `reset()` would return at once and leave
- * the wallbox counting a master for a moment, which is exactly what a restart cannot
+ * socket is then closed AND WAITED FOR — `reset()` would return at once and leave the
+ * wallbox counting a master for a moment, which is exactly what a restart cannot
  * afford.
  */
 gladys.handleShutdown(async () => {
   control.clear();
   control.stop();
   await client.transport.close();
-  gladys.log('Verbindung zur Wallbox geschlossen.');
+  log.info('Verbindung zur Wallbox geschlossen.');
 });
 
 /**
  * Startup.
  *
  * Every handler is registered before this runs, and `connect()` comes after the
- * configuration, because a handler that is missing when the first command arrives is
- * a command that is silently dropped.
+ * configuration, because a handler that is missing when the first command arrives is a
+ * command that is silently dropped.
  */
 async function main() {
   config = normalizeConfig(await gladys.getConfig());
@@ -240,10 +253,12 @@ async function main() {
     await applyConfig(normalizeConfig(next));
   });
   await gladys.connect();
-  gladys.log(`Vestel EVC04 Integration bereit (${config.host || 'keine Adresse'}).`);
+  log.info(`Vestel EVC04 Integration bereit (${config.host || 'keine Adresse'}).`);
   await reportConnection();
 }
 
 main().catch((err) => {
-  gladys.log(`Start fehlgeschlagen: ${err.message}`);
+  // A failure here must not take the container down with a second failure. This is
+  // the line that used to crash, because it called a method the SDK does not have.
+  log.error('Start fehlgeschlagen', err);
 });
