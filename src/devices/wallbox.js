@@ -6,8 +6,16 @@
 // reading. It carries a name, an external id, a category, a type and a unit.
 // Gladys files and displays it by its category, which is why the category has to
 // be one Gladys knows: an unknown category is not a warning, it is a refusal of
-// the WHOLE device, and the Discovery tab stays empty while the integration logs a
-// perfectly healthy list of features.
+// the WHOLE device.
+//
+// THE TEXT FEATURE THAT WAS ONE, AND WHAT IT COST
+// The charge state and the cable state were published as TEXT features at first,
+// and Gladys refused them with:
+//   Could not publish Kabelzustand: states[0]: must have a numeric "state" or a
+//   string "text"
+// The value was a bare string, which the validation does not accept — and because
+// the state was refused, the device stayed half-populated on every poll. Both are
+// published as NUMBERS now, with the word kept for the sentence on the card.
 //
 // WHICH FEATURES EXIST IS DECIDED BY THE DEVICE
 // The builder only makes a feature for a key the wallbox really answered. A
@@ -21,10 +29,9 @@
 // disagree about the unit of the same number.
 //
 // ONLY ONE FEATURE IS WRITABLE, AND IT SAYS SO
-// `charging_current` is the single feature a user can set from Gladys, and it is
-// the only one with `writable: true`. Everything else — the limits the device
-// reports, the states, the meter — is a reading. That is the same rule the
-// register map states in one place, kept here where the features are built.
+// `charging_current` is the single feature a user can set from Gladys. Everything
+// else — the limits, the states, the meter — is a reading. The device has no start
+// and no stop command, so there is nothing else TO write.
 //
 // IT IS UNIT-TESTED WITHOUT A DEVICE: buildDevice() takes a plain snapshot, so the
 // tests hand it hand-written readings.
@@ -43,11 +50,9 @@ const logger = createLogger({ name: 'wallbox' });
 const POWER = TYPE.ENERGY?.POWER ?? 'power';
 const ENERGY = TYPE.ENERGY?.INDEX ?? 'index';
 const CURRENT = TYPE.ENERGY?.CURRENT ?? 'current';
-const VOLTAGE = TYPE.ENERGY?.VOLTAGE ?? 'voltage';
-const TEXT = TYPE.TEXT?.TEXT ?? 'text';
 
 /**
- * The category of every energy reading here.
+ * The category of every reading here.
  *
  * `energy-sensor` is the category that carries a three-phase meter: power,
  * energy, voltage, current, index. It is the only energy category in this file on
@@ -65,27 +70,30 @@ const CAT_ENERGY = CAT.ENERGY_SENSOR;
  *   scale   : applied on the way in; keep it in step with `unit` or the numbers
  *             lie.
  *   writable: true when the user can set it from Gladys.
+ *
+ * A STATE IS A NUMBER, NOT A WORD
+ * `chargepoint_state` and `cable_state` are published as plain numbers. The word
+ * is what the CARD shows, built in src/labels.js; Gladys stores the number, which
+ * is the only thing its validation accepts for a state. The unit is left out so the
+ * interface shows the bare figure next to a name that says it is a code.
  */
 export const FEATURES = [
   // --- What the wallbox is doing ---
-  // The charge state and the cable state are texts: Gladys has no enum feature for
-  // "available", "charging", "faulted", so the state rides on a text feature and
-  // src/widgets.js turns it into a sentence. `keep_history` is off for both: a
-  // state that flips back and forth is not a measurement, and a history of it
-  // would only clutter the graph.
   {
-    key: 'charge_state',
-    name: 'Ladezustand',
-    category: CAT.TEXT,
-    type: TEXT,
+    key: 'chargepoint_state',
+    name: 'Ladezustand (Code)',
+    category: CAT_ENERGY,
+    type: POWER,
+    scale: 1,
     keep_history: false,
     writable: false,
   },
   {
     key: 'cable_state',
-    name: 'Kabelzustand',
-    category: CAT.TEXT,
-    type: TEXT,
+    name: 'Kabelzustand (Code)',
+    category: CAT_ENERGY,
+    type: POWER,
+    scale: 1,
     keep_history: false,
     writable: false,
   },
@@ -120,27 +128,6 @@ export const FEATURES = [
     scale: 1 / 1000,
     writable: false,
   },
-  {
-    key: 'current_l2',
-    name: 'Ladestrom L2',
-    category: CAT_ENERGY,
-    type: CURRENT,
-    unit: UNIT.AMPERE,
-    scale: 1 / 1000,
-    writable: false,
-  },
-  {
-    key: 'current_l3',
-    name: 'Ladestrom L3',
-    category: CAT_ENERGY,
-    type: CURRENT,
-    unit: UNIT.AMPERE,
-    scale: 1 / 1000,
-    writable: false,
-  },
-  { key: 'voltage_l1', name: 'Spannung L1', category: CAT_ENERGY, type: VOLTAGE, unit: UNIT.VOLT, scale: 1, writable: false },
-  { key: 'voltage_l2', name: 'Spannung L2', category: CAT_ENERGY, type: VOLTAGE, unit: UNIT.VOLT, scale: 1, writable: false },
-  { key: 'voltage_l3', name: 'Spannung L3', category: CAT_ENERGY, type: VOLTAGE, unit: UNIT.VOLT, scale: 1, writable: false },
 
   // --- What has been charged ---
   {
@@ -168,18 +155,17 @@ export const FEATURES = [
   // Read-only on purpose. These are the installer's figures, and showing them is
   // how a user can tell why a setpoint of 16 A turned into 13: the wallbox says 13
   // is its maximum. Nothing in Gladys can change them.
-  { key: 'evse_min_current', name: 'Minimaler Ladestrom (Wallbox)', category: CAT_ENERGY, type: CURRENT, unit: UNIT.AMPERE, scale: 1, writable: false },
   { key: 'evse_max_current', name: 'Maximaler Ladestrom (Wallbox)', category: CAT_ENERGY, type: CURRENT, unit: UNIT.AMPERE, scale: 1, writable: false },
   { key: 'cable_max_current', name: 'Maximaler Ladestrom (Kabel)', category: CAT_ENERGY, type: CURRENT, unit: UNIT.AMPERE, scale: 1, writable: false },
 
   // --- The control ---
-  // The charging current is what a scene sets for surplus charging. It is the only
-  // writable feature, and the heartbeat in src/alive.js exists for exactly this
-  // one: without it the setpoint does not survive.
+  // The charging current is the only thing this integration sets, because it is
+  // the only thing the device can be told. It overrides what the wallbox would do
+  // on its own, and the heartbeat in src/alive.js is what keeps it in force.
   //
   // The min and max here are only what a slider offers before the device has
-  // answered; every write is clamped against the limits the WALLBOX reported, not
-  // against these numbers. Keeping them equal to the fallbacks in registers.js
+  // answered; every write is clamped against the limits the WALLBOX reported, with
+  // the floor the app prescribes. Keeping them to the fallbacks in registers.js
   // means the two cannot drift apart.
   {
     key: 'charging_current',
@@ -233,7 +219,7 @@ export function featureValue(feature, snapshot) {
  * A reading snapshot as the scene actions and the widget receive it.
  *
  * The snapshot holds the device's own names and units. What this adds is the one
- * thing every consumer wants: a boolean that says whether energy is flowing right
+ * thing every consumer wants: a flag that says whether energy is flowing right
  * now, which is also the value the two scene triggers watch.
  */
 export function decorate(snapshot = {}) {

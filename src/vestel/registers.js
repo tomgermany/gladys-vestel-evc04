@@ -6,36 +6,39 @@
 // one, and an address that is right on paper and wrong on the wire. Keeping them
 // together means a correction is a one-line edit in one file.
 //
-// THE ADDRESS QUESTION, AND HOW TO SETTLE IT AT THE DEVICE
-// The manufacturer's table prints ranges like "Serial Number [100,124]" and single
-// addresses like `1008`. Two readings are possible:
+// CHECKED AGAINST THE MANUFACTURER'S TABLE (v1.5)
+// The whole map below was read back against the specification page by page. What
+// that confirmed, and what it corrected:
 //
-//   A)  the brackets hold BYTE offsets, so a range of 25 bytes is 13 registers
-//       and the serial number starts at register 50. This is the reading used
-//       below;
-//   B)  the numbers are already REGISTERS, so the serial number starts at 100.
+//   - port 502, unit id 255, and EXACTLY ONE master at a time (stated twice);
+//   - `Charging Current` (5004) is uint16 in AMPERES — this is the only register
+//     that steers a charge;
+//   - `EVSE Min Current` (1102), `EVSE Max Current` (1104) and `Cable Max Current`
+//     (1106) are uint16 in AMPERES, not in milliamperes;
+//   - spec v1.4 changed those three units to A, which is why an older reading of
+//     this table shows different numbers;
+//   - `EVSE Fault Code` (1006) is uint32 since v1.3, so it spans two registers;
+//   - there is NO start and NO stop register. The device has no such command: a
+//     charge begins when the vehicle accepts the current and ends when it does.
+//     What can be steered is how much current is allowed, and that is all this
+//     integration steers.
 //
-// The device answers this in one attempt: the connection test reads the serial
-// number with the configured base and reports what came back. Readable text means
-// the base is right; `Modbus exception 2` (illegal data address) means it is not,
-// and `ADDRESS_BASE` below is the one line to change.
+// THE STRING BLOCK
+// The table prints `Serial Number [100,124]` and similar ranges. Read as BYTE
+// offsets that is 13 registers starting at 50, and the device answered readable
+// text on the first attempt with that reading — so `ADDRESS_BASE` stays as it is.
 //
 // WHAT MAY BE WRITTEN, AND WHAT MAY ONLY BE READ
-// Exactly two registers are written, and both are charging control rather than
-// configuration:
+// Exactly two registers are written, and both belong to the charge:
 //
-//   CONTROL.charging_current (5004)   the setpoint
-//   FAILSAFE.alive (6000)             the heartbeat that keeps the setpoint
+//   CONTROL.charging_current (5004)   the current the vehicle may draw
+//   FAILSAFE.alive (6000)             the heartbeat that keeps it in force
 //
 // Everything else is READ. The limit registers are the installer's figures and
 // this integration respects them; the failsafe registers are read back but never
 // set. What the rule buys is the answer to a plain question: what can someone who
 // does not know this device do from Gladys? They can change how much current
 // flows, which is the feature. They cannot reconfigure the wallbox.
-//
-// TWO CHARACTERS PER REGISTER, SPACE PADDED
-// A string block holds two ASCII characters per 16-bit register, so a 25-byte
-// field is 13 registers and a 5-byte field is 3.
 //
 // NO SCALE FACTORS ON THIS MAP
 // The specification states every unit outright — mA, V, W, 0.1 kWh, Wh, A — so
@@ -47,7 +50,8 @@
  * Which reading of the address table applies.
  *
  *   'byte-ranges'  bracket ranges are byte offsets, divided by two for a register.
- *                  The default, and what the table looks like.
+ *                  The default, and CONFIRMED against the device: the serial number
+ *                  came back as readable text on the first attempt.
  *   'registers'    every printed number is already a register address.
  *
  * Only the string blocks in IDENTITY are affected: the measurement and control
@@ -84,9 +88,9 @@ const block = (from, to) => ({
 /**
  * The identity block: strings, read once after connecting.
  *
- * The serial number is the one that matters: it is the device's stable identity in
- * Gladys, so a wallbox that gets a new IP address from the router keeps its history
- * and its scenes.
+ * Each field is read on its own, so a single refused register costs one field
+ * instead of every field after it — the strings are the part most likely to differ
+ * between firmware families.
  */
 export const IDENTITY = {
   serial: block(100, 124),
@@ -152,14 +156,13 @@ export const METER = {
 /**
  * The limits, READ AND NEVER WRITTEN.
  *
- * These are the figures the installer set on the device, and they answer "how much
- * may I ask for", not "how much do I want". A setpoint above `evse_max_current` is
- * not an error the wallbox reports — it charges at its own maximum while Gladys
- * would report the number it was asked for, which is why every setpoint is clamped
- * against these values rather than against a constant in the code.
+ * Amperes, per specification v1.4. `evse_max_current` is the figure the installer
+ * set on the device, and a setpoint above it is not refused — the wallbox simply
+ * charges at its own maximum while Gladys would report the number it was asked
+ * for. So every setpoint is clamped against these values.
  *
- * `session_max_current` is deliberately not part of the ceiling: it describes the
- * session that is running, not what may be asked for.
+ * `session_max_current` (1100) is deliberately NOT part of the ceiling: it
+ * describes the session that is running, not what may be asked for.
  */
 export const READ_ONLY = {
   evse_min_current: 1102,
@@ -194,20 +197,29 @@ export const FAILSAFE = {
   alive: 6000,
 };
 
-/** Where a controlled charging current is written. */
+/**
+ * Where the charging current is written.
+ *
+ * `Dynamic charging current`, uint16, amperes. This is the ONLY register that
+ * steers a charge — the device has no start and no stop command.
+ */
 export const CONTROL = {
   charging_current: 5004,
 };
 
 /**
- * The smallest and the largest charging current used when the device does not
- * answer its own limit registers at all.
+ * The smallest and the largest charging current this integration will use.
  *
- * THE CEILING IS NOT A GUESS ABOUT ANY PARTICULAR WALLBOX
- * It is the smallest figure that makes sense for a home charge point. A ceiling that
- * is too high is not refused by the device — the wallbox charges at its own maximum
- * while Gladys reports what it was asked for. So the fallback stays low on purpose,
- * and the real figure is normally read from 1104 and 1106.
+ * THE FLOOR IS 6 A BECAUSE THE MANUFACTURER'S APP SAYS SO
+ * The device reports its own minimum in `1102`, and on the reference device that
+ * register answers 0 — a value the wallbox would refuse as a setpoint and which no
+ * vehicle would accept. The app that ships with the device offers 6 A as the
+ * lowest setting, so 6 A is the floor here, whatever the register claims.
+ *
+ * THE CEILING IS A FALLBACK, NOT A CLAIM
+ * It is used only when the device does not answer `1104` and `1106` at all. A
+ * ceiling that is too high is not refused by the device — it charges at its own
+ * maximum while Gladys reports what it was asked for.
  */
 export const DEFAULT_MIN_CURRENT = 6;
 export const DEFAULT_MAX_CURRENT = 16;
@@ -218,9 +230,10 @@ export const MIN_ALIVE_PERIOD_S = 3;
 /**
  * The alive period for a given failsafe timeout: half of it, never below 3 s.
  *
- * Half is what the specification prescribes. The floor exists because a timeout
- * configured to 4 seconds would otherwise ask for a 2-second beat, and the device
- * refuses to be driven that fast.
+ * Half is what the specification prescribes, and the default timeout is 20 s — a
+ * beat every 10 s. The floor exists because a timeout configured to 4 seconds
+ * would otherwise ask for a 2-second beat, and the device refuses to be driven
+ * that fast.
  */
 export function alivePeriodMs(failsafeTimeoutS) {
   const seconds = Math.max(MIN_ALIVE_PERIOD_S, Number(failsafeTimeoutS) / 2 || 0);
@@ -263,16 +276,20 @@ export const EQUIPMENT_STATE = {
  * `kind` is what the reader does with the address:
  *   'uint16'  one register, unsigned
  *   'acc32'   two registers, high word first, unsigned
- *   'state'   one register, looked up in a named table
+ *   'state'   one register, kept as NUMBER and looked up in a named table
  * A reading the device does not provide is left OUT of the snapshot rather than
  * published as a zero: a wrong value in the history is worse than a missing one.
+ *
+ * WHY A STATE KEEPS ITS NUMBER
+ * The word is for the sentence on the card and the log. Gladys stores the number,
+ * because a text feature is the wrong shape for a state it has to compare — see
+ * src/devices/wallbox.js for what that cost on the first real start.
  */
 export const POLL_PLAN = [
   { key: 'chargepoint_state', kind: 'state', address: STATE.chargepoint, table: CHARGEPOINT_STATE },
   { key: 'charging_state', kind: 'uint16', address: STATE.charging },
   { key: 'equipment_state', kind: 'state', address: STATE.equipment, table: EQUIPMENT_STATE },
   { key: 'cable_state', kind: 'state', address: STATE.cable, table: CABLE_STATE },
-  { key: 'fault_code', kind: 'acc32', address: STATE.fault.address },
   { key: 'current_l1', kind: 'uint16', address: METER.current_l1, unit: 'mA' },
   { key: 'current_l2', kind: 'uint16', address: METER.current_l2, unit: 'mA' },
   { key: 'current_l3', kind: 'uint16', address: METER.current_l3, unit: 'mA' },
@@ -280,15 +297,10 @@ export const POLL_PLAN = [
   { key: 'voltage_l2', kind: 'uint16', address: METER.voltage_l2, unit: 'V' },
   { key: 'voltage_l3', kind: 'uint16', address: METER.voltage_l3, unit: 'V' },
   { key: 'power', kind: 'acc32', address: METER.power.address, unit: 'W' },
-  { key: 'power_l1', kind: 'acc32', address: METER.power_l1.address, unit: 'W' },
-  { key: 'power_l2', kind: 'acc32', address: METER.power_l2.address, unit: 'W' },
-  { key: 'power_l3', kind: 'acc32', address: METER.power_l3.address, unit: 'W' },
   { key: 'meter_reading', kind: 'acc32', address: METER.meter_reading.address, unit: '0.1kWh' },
   { key: 'session_energy', kind: 'acc32', address: SESSION.energy.address, unit: 'Wh' },
   { key: 'session_duration', kind: 'acc32', address: SESSION.duration.address, unit: 's' },
   { key: 'session_max_current', kind: 'uint16', address: SESSION.max_current, unit: 'A' },
-  { key: 'evse_min_current', kind: 'uint16', address: READ_ONLY.evse_min_current, unit: 'A' },
-  { key: 'evse_max_current', kind: 'uint16', address: READ_ONLY.evse_max_current, unit: 'A' },
   { key: 'cable_max_current', kind: 'uint16', address: READ_ONLY.cable_max_current, unit: 'A' },
 ];
 
