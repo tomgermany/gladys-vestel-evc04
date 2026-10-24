@@ -14,22 +14,21 @@
 // crossing, the same way the WattWächter integration reports a power threshold
 // being crossed rather than a power being high.
 //
-// WHY THE COMPARISON LIVES HERE
-// A trigger declared by an integration can only match EQUALITY on its fields:
-// there is no operator and no threshold on the Gladys side. "Started" is
-// therefore an event the integration derives, not a condition a scene checks.
+// WHY THERE IS NO "START" AND NO "STOP" ACTION
+// The device has neither. The manufacturer's table lists no start and no stop
+// register: a charge begins when the vehicle accepts the current, and ends when
+// the vehicle stops drawing it. What CAN be steered is how much current the
+// vehicle may draw, and that is the single action here.
 //
-// THE ACTIONS
-// `set_charging_current` and `release_charging_current` belong to the heartbeat
-// in src/alive.js: setting a current starts it, releasing stops it. A scene that
-// only reads values never touches either.
+// A RELEASED SETPOINT IS NOT A THING EITHER
+// An earlier version had a second action that "handed control back". It did not:
+// the wallbox has no such state, and the only thing it can do is have a value in
+// 5004. Whoever wants a different current sets a different current.
 //
-// WHAT MAY BE WRITTEN, AND WHY THAT IS A SHORT LIST
-// The charging current, and nothing else. A setpoint overrides what the wallbox
-// would do on its own, which is the point; releasing hands that back by writing
-// the FLOOR the device itself allows — a charging current again, not a
-// configuration value. Nothing here can change how the wallbox is set up, so a
-// scene author who does not know the device cannot misconfigure it.
+// WHAT MAY BE WRITTEN, AND WHY THAT IS A LIST OF ONE
+// The charging current, and nothing else. Setting it overrides what the wallbox
+// would do on its own, and the heartbeat in src/alive.js is what keeps it in
+// force. Nothing here can change how the wallbox is configured.
 // -----------------------------------------------------------------------------
 
 import { CONTROL } from './vestel/registers.js';
@@ -112,12 +111,14 @@ export function kilowattHours(raw, divisor = 1) {
  */
 export const SCENE_ACTIONS = {
   /**
-   * Set the charging current, and start the heartbeat.
+   * Set the charging current, and keep the heartbeat running.
    *
-   * The value is clamped to what the device and the cable allow, read from the
-   * wallbox itself. Asking for more than the device accepts is not an error it
-   * reports — it simply charges at its own maximum — so clamping here is what
-   * keeps the number a scene reports the number that is really in force.
+   * THE VALUE IS CLAMPED, AND WHY THAT IS NOT OPTIONAL
+   * Asking for more than the device accepts is not an error it reports — it simply
+   * charges at its own maximum — so without the clamp a scene would report 16 A
+   * while the car draws 13. The floor of 6 A comes from the manufacturer's app, not
+   * from register 1102: on the reference device that register answers 0, which is a
+   * setpoint the wallbox refuses.
    */
   async set_charging_current({ client, fields, control }) {
     if (!client) throw new Error('Keine Verbindung zur Wallbox');
@@ -130,25 +131,5 @@ export const SCENE_ACTIONS = {
     await client.writeRegister(CONTROL.charging_current, current);
     control.set(current);
     return { current };
-  },
-
-  /**
-   * Release the setpoint: write the FLOOR the device allows, not zero.
-   *
-   * The wallbox has no "no charging" register, and a current of zero is a value
-   * it refuses. `evse_min_current` (1102) is the smallest value the installer
-   * left enabled on this device, so handing control back means allowing that —
-   * and since 1102 is only ever READ, releasing changes no configuration.
-   *
-   * The heartbeat stops with it. That is what makes the value stick: while it
-   * runs, this integration is the master and the setpoint holds; once it stops,
-   * the wallbox is free to do what it was configured to do.
-   */
-  async release_charging_current({ client, control }) {
-    if (!client) throw new Error('Keine Verbindung zur Wallbox');
-    const limits = client.getLimits();
-    await client.writeRegister(CONTROL.charging_current, limits.min);
-    control.clear();
-    return { current: limits.min };
   },
 };
