@@ -181,6 +181,9 @@ export class VestelModbus {
     this.transport = transport ?? new ModbusSocket({ host, port, responseTimeoutMs: timeoutMs });
     // Optional hook: the caller logs what was tolerated instead of failing.
     this.warn = null;
+    // Optional diagnostic hook for temporary, targeted troubleshooting.
+    // It is deliberately separate from `warn`: a successful read is not a warning.
+    this.diagnostic = null;
   }
 
   /** Serial-number and firmware block: the cheap way to prove the device talks. */
@@ -231,6 +234,22 @@ export class VestelModbus {
   /** Read two registers, high word first, as an unsigned 32-bit number. */
   async readAcc32(address) {
     const words = await this.readBlock(address, 2);
+
+    // Temporary diagnostic for the cumulative energy meter only (registers
+    // 1036–1037). Log the two actual 16-bit words as unsigned numbers as well as
+    // the combined 32-bit value. This lets us distinguish a real zero from a
+    // decoding/word-order problem without changing any value sent to Gladys.
+    // Other 32-bit readings are intentionally left alone to keep the logs useful.
+    if (address === 1036) {
+      const rawWords = words.map(toUint16);
+      const unavailable = words.includes(NOT_AVAILABLE);
+      const combined = unavailable ? null : toAcc32(words);
+      this.diagnostic?.(
+        `Meter Reading diagnostic (registers 1036-1037): raw=[${rawWords.join(', ')}], ` +
+          `combined=${combined === null ? 'not available' : combined} (unit: 0.1 kWh)`,
+      );
+    }
+
     if (words.includes(NOT_AVAILABLE)) return null;
     return toAcc32(words);
   }
