@@ -62,6 +62,14 @@
 // MILLISECONDS and chosen from DEVICE_POLL_FREQUENCIES (1 s, 2 s, 10 s, 15 s, 30 s,
 // 1 min) — any other value is refused with a 400.
 //
+// THE SLIDER BOUNDS COME FROM THE DEVICE, NOT FROM A CONSTANT
+// `charging_current` carries `min` and `max`, and those are what a slider offers.
+// They are NOT the fallbacks in registers.js when the device has answered its own
+// limit registers: this wallbox reports 13 A as its ceiling, and a slider that
+// offers 6–16 would let a user ask for a value the wallbox silently ignores. The
+// caller therefore passes the limits it read, and the fallbacks only stand in for a
+// device that answers those registers at all.
+//
 // IT IS UNIT-TESTED WITHOUT A DEVICE: buildDevice() takes a plain snapshot, so the
 // tests hand it hand-written readings.
 // -----------------------------------------------------------------------------
@@ -108,6 +116,9 @@ const CAT_ENERGY = CAT.ENERGY_SENSOR;
  *   as      : 'sentence' | 'state' | 'number' — see the note at the top.
  *   scale   : applied on the way in; keep it in step with `unit` or the numbers lie.
  *   writable: true when the user can set it from Gladys.
+ *   bounds  : the row whose min/max follow the DEVICE's own limits. Only
+ *             `charging_current` has it: it is the one feature a user can move, and
+ *             the only one whose range the wallbox gets a say in.
  */
 export const FEATURES = [
   // --- What the wallbox is doing, as the sentence a user reads ---
@@ -251,10 +262,9 @@ export const FEATURES = [
   // only thing the device can be told. It overrides what the wallbox would do on its
   // own, and the heartbeat in src/alive.js is what keeps it in force.
   //
-  // The min and max here are only what a slider offers before the device has
-  // answered; every write is clamped against the limits the WALLBOX reported, with
-  // the floor the app prescribes. Keeping them to the fallbacks in registers.js means
-  // the two cannot drift apart.
+  // `bounds: true` means the min and max below are only what stands in BEFORE the
+  // device has answered; a caller that read the wallbox's limits overrides them. This
+  // is what keeps the slider from offering a current the wallbox ignores.
   {
     key: 'charging_current',
     name: 'Ladestrom',
@@ -266,6 +276,7 @@ export const FEATURES = [
     scale: 1,
     min: DEFAULT_MIN_CURRENT,
     max: DEFAULT_MAX_CURRENT,
+    bounds: true,
     writable: true,
   },
 ];
@@ -331,6 +342,23 @@ export function featureValue(feature, snapshot) {
 }
 
 /**
+ * The range a feature is offered with.
+ *
+ * A row marked `bounds` follows the DEVICE's own limits when the caller read them,
+ * and falls back to the row's constants when it did not. Those constants are the
+ * smallest figures that make sense for a home charge point, not a generous guess: a
+ * ceiling that is too high is a value the wallbox silently ignores, and the user
+ * reads a number that is not true.
+ */
+export function featureBounds(feature, limits) {
+  const min = Number(limits?.min);
+  const max = Number(limits?.max);
+  const known = Number.isFinite(min) && min > 0 && Number.isFinite(max) && max >= min;
+  if (feature.bounds && known) return { min, max };
+  return { min: feature.min ?? 0, max: feature.max ?? 0 };
+}
+
+/**
  * Build the discovery payload: "here is a wallbox, with these readings".
  *
  * Gladys creates nothing from this. It is an offer shown in the Discovery tab, where
@@ -339,21 +367,27 @@ export function featureValue(feature, snapshot) {
  * `pollFrequency` is the rate the user chose, in milliseconds, and one of the values
  * Gladys accepts. It is passed in rather than fixed here, so the configuration screen
  * is what decides how often the wallbox is read.
+ *
+ * `limits` are the figures the WALLBOX reported for `1102`, `1104`, `1106` and
+ * `1100` — see Evc04Client.readLimits(). They decide the slider range of the one
+ * writable feature. Passing nothing is not an error: a device that does not answer
+ * those registers keeps the fallbacks.
  */
-export function buildDevice(gladys, device, snapshot, pollFrequency) {
+export function buildDevice(gladys, device, snapshot, pollFrequency, limits = null) {
   const ids = gladys.externalIds(PLATFORM_TYPE, platformId(device));
   const features = [];
 
   for (const f of FEATURES) {
     if (featureValue(f, snapshot) === null) continue;
+    const bounds = featureBounds(f, limits);
     features.push({
       name: f.name,
       external_id: ids.feature(f.key),
       category: f.category,
       type: f.type,
       unit: f.unit ?? null,
-      min: f.min ?? 0,
-      max: f.max ?? 0,
+      min: bounds.min,
+      max: bounds.max,
       read_only: !f.writable,
       has_feedback: true,
       keep_history: f.keep_history !== false,
