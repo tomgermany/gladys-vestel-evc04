@@ -74,7 +74,12 @@ import {
 } from '@gladysassistant/integration-sdk';
 import { DEFAULT_MIN_CURRENT, DEFAULT_MAX_CURRENT } from '../vestel/registers.js';
 import { Evc04Client } from '../vestel/client.js';
-import { stateSentence, cableSentence, deviceSentence } from '../labels.js';
+// `stateSentence` is deliberately not imported here. The charge state goes through
+// `deviceSentence`, which falls back to `stateSentence` INSIDE src/labels.js when the
+// device is not charging; the cable state goes through `cableSentence`. An import
+// that nothing in this file calls is an unused variable, and ESLint is right to say
+// so — it was left behind when the state moved from numbers to words.
+import { cableSentence, deviceSentence } from '../labels.js';
 
 const logger = createLogger({ name: 'wallbox' });
 
