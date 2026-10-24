@@ -1,56 +1,14 @@
-// -----------------------------------------------------------------------------
-// The entry point: wiring, and nothing else.
-//
-// WHAT THIS FILE IS FOR
-// The integration container is started by the Gladys supervisor and lives as
-// long as Gladys does. This file is what the supervisor runs (`"main"` in
-// package.json, `node index.js`). It owns the two objects that have a lifetime:
-// the Modbus connection and the alive heartbeat. Everything else is a pure
-// function called on demand.
-//
-// THE METHOD NAMES COME FROM THE SDK, NOT FROM MEMORY
-// Every name below was read out of the SDK's own type declarations
-// (`GladysIntegration` in @gladysassistant/integration-sdk). An earlier version of
-// this file guessed them, and the guess cost a container that died on startup with
-// `TypeError: gladys.onScan is not a function` — before a single register was read.
-// The ones that were wrong, and what they really are:
-//
-//   onScan(cb)          -> onScanRequest(cb)
-//   onWidget(key, cb)   -> onWidgetGet(key, cb)
-//   onWidgetAction(cb)  -> onSetValue(cb)      a feature value changed
-//   emitEvent(k, d)     -> publishSceneEvent(k, d)
-//   publishDeviceProperties(...)  -> does not exist
-//
-// THERE IS NO DEVICE-PROPERTY API
-// The SDK documents handlers, state publishing and the host API, and no way to
-// attach properties to a device. So the identity and the meter readings that used
-// to be properties or features are no longer published at all; what remains is the
-// one ampere reading, which is what a wallbox user looks at.
-//
-// ONE CONNECTION, FOR AS LONG AS THE CONTAINER RUNS
-// The EVC04 specification allows exactly one Modbus master at a time, so there is
-// one `Evc04Client` here and it is never replaced while the process runs. The
-// connection test does NOT open a second socket — it runs on this one.
-//
-// THE HEARTBEAT RUNS WHILE A CURRENT IS SET, NOT WHILE THE PROCESS RUNS
-// The alive register (6000) is what keeps OUR setpoint in force. With no setpoint
-// of ours there is nothing to keep in force, and the wallbox works from its own
-// configuration — the state the user had before this integration existed. So the
-// heartbeat starts when a current is set and stops when it is released, and it
-// stops on shutdown either way.
-//
-// HANDLERS ARE REGISTERED, THEN THE CONNECTION IS OPENED
-// `connect()` is the SDK's own method: it opens the WebSocket, authenticates and
-// resynchronizes. It is called LAST, after every handler is registered, so a device
-// that is slow to answer slows down a poll instead of delaying startup.
-// -----------------------------------------------------------------------------
-
 import { GladysIntegration } from '@gladysassistant/integration-sdk';
 import { DEFAULT_CONFIG, normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
 import { AliveControl } from './src/alive.js';
 import { buildDevice, publishAll, PLATFORM_TYPE } from './src/devices/wallbox.js';
-import { buildChargerContent, CHARGER_WIDGET, chargerAction, CURRENT_READING } from './src/widgets.js';
+// `chargerAction` is deliberately not imported here. The SDK delivers a setpoint
+// through `onSetValue`, so the setpoint is clamped in the handler from the device's
+// own limits — the widget-returning mechanism is not part of that surface. The
+// function and its tests stay in src/widgets.js, because removing them is a decision
+// about the tests, not a side effect of an import.
+import { buildChargerContent, CHARGER_WIDGET, CURRENT_READING } from './src/widgets.js';
 // `TRIGGER` is deliberately not imported here: the event keys come out of
 // `chargingEvents()` as `event.key`, so nothing in this file needs the trigger
 // names themselves. Importing them only produced an unused variable.
@@ -137,8 +95,8 @@ async function poll() {
 /**
  * Which devices this integration offers, when Gladys asks.
  *
- * The callback receives the scan request, and answers with the list of devices.
- * A discovery that answers nothing is one the user cannot act on, so this reads the
+ * The callback receives the scan request and answers with the list of devices. A
+ * discovery that answers nothing is one the user cannot act on, so this reads the
  * identity block and then offers one wallbox. If the address is wrong, the error is
  * the one from the connection — which names host and port, and is the message a user
  * needs.
@@ -155,7 +113,7 @@ gladys.onScanRequest(async () => {
   return [buildDevice(gladys, deviceInfo, await client.readAll(), config.poll_frequency, limits)];
 });
 
-/** One poll, on the rate the user chose. The devices are read from the connection. */
+/** One poll, on the rate the user chose. */
 gladys.onPoll(async () => {
   await poll();
   return { should_poll: true, poll_frequency: config.poll_frequency };
@@ -208,8 +166,8 @@ gladys.onAction('test_connection', async () => {
  * The dashboard card.
  *
  * The content is built from the last snapshot, so a card opened between two polls
- * shows the reading that was really taken rather than a number invented here. The
- * id passed to the tile is the one feature this device publishes.
+ * shows the reading that was really taken rather than a number invented here. The id
+ * passed to the tile is the one feature this device publishes.
  */
 gladys.onWidgetGet(CHARGER_WIDGET, async () => {
   const ids = deviceIds();
@@ -242,7 +200,7 @@ gladys.onSceneAction('set_charging_current', async (fields) => {
  */
 async function reportConnection() {
   try {
-    await client.readUint16(CONTROL.charging_current);
+    await client.readOptionalUint16(CONTROL.charging_current);
     await gladys.setConnectionStatus(true);
   } catch (err) {
     await gladys.setConnectionStatus(false, {
@@ -258,8 +216,8 @@ async function reportConnection() {
  * `handleShutdown` is the SDK's own path: it runs this cleanup, disconnects cleanly
  * and exits. The heartbeat is stopped first, so no write can be in flight, and the
  * socket is then closed AND WAITED FOR — `reset()` would return at once and leave
- * the wallbox counting a master for a moment, which is exactly what a restart
- * cannot afford.
+ * the wallbox counting a master for a moment, which is exactly what a restart cannot
+ * afford.
  */
 gladys.handleShutdown(async () => {
   control.clear();
