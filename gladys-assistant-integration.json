@@ -29,10 +29,16 @@
         "es": "Dirección del cargador"
       },
       "description": {
-        "de": "IP-Adresse oder mDNS-Name. Eine feste IP per DHCP-Reservierung ist robuster.",
-        "en": "IP address or mDNS name. A fixed IP via DHCP reservation is more robust.",
-        "fr": "Adresse IP ou nom mDNS. Une IP fixe par réservation DHCP est plus robuste.",
-        "es": "Dirección IP o nombre mDNS. Una IP fija por reserva DHCP es más robusta."
+        "de": "IP-Adresse oder mDNS-Name, ohne http:// und ohne Schrägstrich. Eine feste IP per DHCP-Reservierung ist robuster als ein Name.",
+        "en": "IP address or mDNS name, without http:// and without a trailing slash. A fixed IP via a DHCP reservation is more robust than a name.",
+        "fr": "Adresse IP ou nom mDNS, sans http:// et sans barre oblique. Une IP fixe par réservation DHCP est plus robuste qu'un nom.",
+        "es": "Dirección IP o nombre mDNS, sin http:// y sin barra final. Una IP fija por reserva DHCP es más robusta que un nombre."
+      },
+      "placeholder": {
+        "de": "192.168.0.201",
+        "en": "192.168.0.201",
+        "fr": "192.168.0.201",
+        "es": "192.168.0.201"
       }
     },
     {
@@ -93,34 +99,16 @@
       "key": "control_intro",
       "type": "section",
       "label": {
-        "de": "Steuerung",
-        "en": "Control",
-        "fr": "Commande",
-        "es": "Control"
+        "de": "Ladestrom",
+        "en": "Charging current",
+        "fr": "Courant de charge",
+        "es": "Corriente de carga"
       },
       "description": {
-        "de": "Der Ladestrom wird in Register 5004 gesetzt, begrenzt auf das, was die Wallbox selbst erlaubt. Solange ein Sollwert gilt, hält die Integration den Alive-Register (6000). Die Grenzen selbst werden nur gelesen, niemals gesetzt: was du in der Wallbox einträgst, gilt.",
-        "en": "The charging current is set in register 5004, clamped to what the wallbox itself allows. While a setpoint holds, the integration keeps the alive register (6000) answered. The limits themselves are read, never written: what you enter on the wallbox is what applies.",
-        "fr": "Le courant de charge se règle dans le registre 5004, limité à ce que la borne autorise. Tant qu'une consigne tient, l'intégration entretient le registre alive (6000). Les limites elles-mêmes sont lues, jamais écrites : ce que vous saisissez sur la borne s'applique.",
-        "es": "La corriente de carga se ajusta en el registro 5004, limitada a lo que el cargador permite. Mientras hay una consigna, la integración mantiene el registro alive (6000). Los límites se leen, nunca se escriben: lo que introduzcas en el cargador es lo que vale."
-      }
-    },
-    {
-      "key": "failsafe_current",
-      "type": "number",
-      "required": false,
-      "default": 6,
-      "label": {
-        "de": "Failsafe-Strom in A (nur für den Herzschlag)",
-        "en": "Failsafe current in A (heartbeat only)",
-        "fr": "Courant de secours en A (pulsation uniquement)",
-        "es": "Corriente de seguridad en A (solo latido)"
-      },
-      "description": {
-        "de": "Wird NICHT auf die Wallbox geschrieben. Er bestimmt nur, welcher Ladestrom gilt, nachdem die Steuerung freigegeben wurde — sinnvoll ist der kleinste Wert, den dein Fahrzeug akzeptiert.",
-        "en": "This is NOT written to the wallbox. It only decides which charging current applies after a setpoint is released — the smallest value your vehicle accepts is the safe choice.",
-        "fr": "N'est PAS écrit sur la borne. Il détermine seulement le courant appliqué après la libération d'une consigne — la plus petite valeur acceptée par votre véhicule est le choix sûr.",
-        "es": "NO se escribe en el cargador. Solo decide qué corriente se aplica tras liberar una consigna: el valor más pequeño que acepte tu vehículo es lo prudente."
+        "de": "Die Wallbox kennt kein Ein- und kein Ausschalten: ein Ladevorgang beginnt, wenn das Fahrzeug den Strom annimmt, und endet, wenn es aufhört zu ziehen. Was sich setzen lässt, ist der erlaubte Ladestrom in Register 5004 — zwischen 6 A, wie in der Hersteller-App, und dem Maximum, das die Wallbox selbst meldet. Solange ein Wert gilt, hält die Integration den Alive-Register (6000).",
+        "en": "The wallbox has no on and no off: a charge begins when the vehicle accepts the current and ends when it stops drawing. What can be set is the allowed charging current in register 5004 — between 6 A, as in the manufacturer's app, and the maximum the wallbox itself reports. While a value holds, the integration keeps the alive register (6000) answered.",
+        "fr": "La borne n'a ni marche ni arrêt : une charge commence quand le véhicule accepte le courant et se termine quand il cesse de tirer. Ce qui se règle, c'est le courant autorisé dans le registre 5004 — entre 6 A, comme dans l'app du fabricant, et le maximum que la borne annonce. Tant qu'une valeur tient, l'intégration entretient le registre alive (6000).",
+        "es": "El cargador no tiene encendido ni apagado: una carga empieza cuando el vehículo acepta la corriente y termina cuando deja de consumirla. Lo que se ajusta es la corriente permitida en el registro 5004, entre 6 A, como en la app del fabricante, y el máximo que el cargador anuncia. Mientras hay un valor, la integración mantiene el registro alive (6000)."
       }
     },
     {
@@ -135,10 +123,10 @@
         "es": "Plazo del latido en segundos"
       },
       "description": {
-        "de": "Wird NICHT auf die Wallbox geschrieben. Sie bestimmt nur, wie oft der Herzschlag (Register 6000) bedient wird: die halbe Frist, mindestens alle 3 Sekunden.",
-        "en": "This is NOT written to the wallbox. It only decides how often the heartbeat (register 6000) is answered: half of it, never less than every 3 seconds.",
-        "fr": "N'est PAS écrit sur la borne. Il détermine seulement la fréquence d'entretien du registre alive (6000) : la moitié, jamais moins de 3 secondes.",
-        "es": "NO se escribe en el cargador. Solo decide cada cuánto se atiende el registro alive (6000): la mitad, nunca menos de 3 segundos."
+        "de": "Wird NICHT auf die Wallbox geschrieben. Sie bestimmt nur, wie oft der Herzschlag (Register 6000) bedient wird: die halbe Frist, mindestens alle 3 Sekunden. Werkseitig sind es 20 Sekunden.",
+        "en": "This is NOT written to the wallbox. It only decides how often the heartbeat (register 6000) is answered: half of it, never less than every 3 seconds. The factory setting is 20 seconds.",
+        "fr": "N'est PAS écrit sur la borne. Il détermine seulement la fréquence d'entretien du registre alive (6000) : la moitié, jamais moins de 3 secondes. Le réglage d'usine est de 20 secondes.",
+        "es": "NO se escribe en el cargador. Solo decide cada cuánto se atiende el registro alive (6000): la mitad, nunca menos de 3 segundos. De fábrica son 20 segundos."
       }
     }
   ],
@@ -170,10 +158,10 @@
         "es": "Cargador"
       },
       "description": {
-        "de": "Ladezustand in Worten, die aktuelle Ladeleistung und der Ladestrom live.",
-        "en": "Charging state in words, the current charging power and the charging current live.",
-        "fr": "L'état de charge en mots, la puissance en cours et le courant en direct.",
-        "es": "El estado de carga en palabras, la potencia actual y la corriente en directo."
+        "de": "Ladezustand in Worten, die aktuelle Ladeleistung und der gesetzte Ladestrom.",
+        "en": "Charging state in words, the current charging power and the set charging current.",
+        "fr": "L'état de charge en mots, la puissance en cours et le courant réglé.",
+        "es": "El estado de carga en palabras, la potencia actual y la corriente ajustada."
       },
       "icon": "zap",
       "action_timeout_seconds": 15
@@ -285,10 +273,10 @@
         "es": "Ajustar la corriente de carga"
       },
       "description": {
-        "de": "Setzt den Ladestrom in Ampere, begrenzt auf das, was die Wallbox und das Kabel erlauben.",
-        "en": "Sets the charging current in amperes, clamped to what the wallbox and the cable allow.",
-        "fr": "Règle le courant de charge en ampères, limité à ce que la borne et le câble autorisent.",
-        "es": "Ajusta la corriente de carga en amperios, limitada a lo que permiten el cargador y el cable."
+        "de": "Setzt den Ladestrom in Ampere, begrenzt auf 6 bis zu dem Maximum, das die Wallbox und das Kabel erlauben.",
+        "en": "Sets the charging current in amperes, clamped between 6 and the maximum the wallbox and the cable allow.",
+        "fr": "Règle le courant de charge en ampères, limité entre 6 et le maximum autorisé par la borne et le câble.",
+        "es": "Ajusta la corriente de carga en amperios, limitada entre 6 y el máximo que permiten el cargador y el cable."
       },
       "timeout_seconds": 30,
       "fields": [
@@ -296,6 +284,8 @@
           "key": "current",
           "type": "number",
           "required": true,
+          "min": 6,
+          "max": 32,
           "label": {
             "de": "Ladestrom in A",
             "en": "Charging current in A",
@@ -313,34 +303,6 @@
             "en": "Current set in A",
             "fr": "Courant réglé en A",
             "es": "Corriente ajustada en A"
-          }
-        }
-      ]
-    },
-    {
-      "key": "release_charging_current",
-      "label": {
-        "de": "Ladestrom freigeben",
-        "en": "Release the charging current",
-        "fr": "Libérer le courant de charge",
-        "es": "Liberar la corriente de carga"
-      },
-      "description": {
-        "de": "Beendet die Steuerung. Der Herzschlag wird nicht mehr bedient, die Wallbox lädt wieder nach ihrer eigenen Einstellung.",
-        "en": "Ends the control. The heartbeat stops being answered and the wallbox charges according to its own setting again.",
-        "fr": "Met fin à la commande. Le registre alive n'est plus entretenu et la borne recharge selon son propre réglage.",
-        "es": "Termina el control. El registro alive deja de atenderse y el cargador vuelve a cargar según su propio ajuste."
-      },
-      "timeout_seconds": 30,
-      "outputs": [
-        {
-          "key": "current",
-          "type": "number",
-          "label": {
-            "de": "Freigegebener Strom in A",
-            "en": "Released current in A",
-            "fr": "Courant libéré en A",
-            "es": "Corriente liberada en A"
           }
         }
       ]
