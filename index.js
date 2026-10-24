@@ -41,7 +41,10 @@ import { Evc04Client } from './src/vestel/client.js';
 import { AliveControl } from './src/alive.js';
 import { buildDevice, publishAll, PLATFORM_TYPE } from './src/devices/wallbox.js';
 import { buildChargerContent, CHARGER_WIDGET, chargerAction } from './src/widgets.js';
-import { SCENE_ACTIONS, TRIGGER, chargingEvents } from './src/scenes.js';
+// `TRIGGER` is deliberately not imported here: the event keys come out of
+// `chargingEvents()` as `event.key`, so nothing in this file needs the trigger
+// names themselves. Importing them only produced an unused variable.
+import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { t, deviceSentence } from './src/labels.js';
 import { CONTROL } from './src/vestel/registers.js';
 
@@ -199,8 +202,13 @@ gladys.onWidget(CHARGER_WIDGET, async () => {
  * The card worked out the intention; this applies it. The current is read from
  * the snapshot the user is looking at, so two taps in a row give two different
  * values, and the limits come from the DEVICE rather than from the card.
+ *
+ * The handler takes only `action`. The SDK also passes the feature that was
+ * tapped, and this device does not need it: the only one it writes is
+ * `charging_current`, and the widest tap is {"-", "+"} on that same card. Taking
+ * a parameter nobody reads is how a lint rule gets silenced instead of obeyed.
  */
-gladys.onWidgetAction(async ({ action, device_feature }) => {
+gladys.onWidgetAction(async ({ action }) => {
   const intent = chargerAction({
     actionKey: action?.key,
     params: action?.params,
@@ -215,7 +223,7 @@ gladys.onWidgetAction(async ({ action, device_feature }) => {
 });
 
 /** The one scene action: set the charging current, with the heartbeat kept alive. */
-gladys.onSceneAction(SCENE_ACTIONS.set_charging_current._key ?? 'set_charging_current', async (fields) => {
+gladys.onSceneAction('set_charging_current', async (fields) => {
   return SCENE_ACTIONS.set_charging_current({ client, fields, control });
 });
 
