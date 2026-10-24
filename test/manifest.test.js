@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { SCENE_ACTIONS, TRIGGER, chargingEvents, kilowattHours } from '../src/scenes.js';
-import { CHARGER_WIDGET, chargerAction, ACTION } from '../src/widgets.js';
+import { CHARGER_WIDGET, chargerAction, ACTION, stepFromSettings, STEP_CHOICES } from '../src/widgets.js';
 import { stateSentence, cableSentence, deviceSentence, t } from '../src/labels.js';
-import { CHARGEPOINT_STATE, CABLE_STATE } from '../src/vestel/registers.js';
+import { CHARGEPOINT_STATE, CABLE_STATE, POLL_PLAN } from '../src/vestel/registers.js';
 import { Evc04Client } from '../src/vestel/client.js';
 import { FEATURES, featureValue, buildDevice } from '../src/devices/wallbox.js';
 
@@ -29,6 +29,11 @@ const snapshot = {
   equipment_state: { value: 1, word: 'running' },
   cable_state: { value: 0, word: 'unplugged' },
   current_l1: 0,
+  current_l2: 0,
+  current_l3: 0,
+  voltage_l1: 230,
+  voltage_l2: 230,
+  voltage_l3: 230,
   power: 0,
   meter_reading: 123456,
   session_energy: 4321,
@@ -151,44 +156,70 @@ test('a reading of 0 is a reading, not a missing value', () => {
   assert.equal(Evc04Client.reading(snapshot, 'charging_current'), 130);
 });
 
-// --- the one feature, against the snapshot ---
-// This device publishes ONE feature: the amperes the car is drawing. The tests that
-// used to sit here checked a sentence feature and two code features — all three were
-// removed when the feature list was cut to the ampere reading, and a test for a row
-// that no longer exists fails with `Cannot read properties of undefined`.
-//
-// WHAT IS CHECKED INSTEAD
-// The row that DOES exist, and the two things that decide whether it reaches Gladys:
-// its source is in the snapshot, and the tenths of an ampere become amperes exactly
-// once — here, and never a second time at a call site.
+// --- the properties of the device ---
+// The DEVICE and the WIDGET are two different surfaces. This file's list is the
+// device: everything Gladys files, keeps history for and shows on the device page.
+// It was once cut down to the ampere reading alone, which left sixteen readings the
+// poll plan fetched on every cycle unpublished. These tests hold the fuller list in
+// place, and each one fails for a reason a reader can act on.
 
-test('the device publishes exactly one feature, and it is the current', () => {
-  assert.deepEqual(
-    FEATURES.map((f) => f.key),
-    ['charging_current'],
-    'the feature list is the ampere reading and nothing else',
-  );
-});
-
-test('the one feature finds its source in the snapshot', () => {
+test('every property names its source, and its source is in the poll plan', () => {
+  const polled = new Set(POLL_PLAN.map((entry) => entry.key));
   for (const f of FEATURES) {
-    assert.ok(f.source, `feature "${f.key}" names no source`);
-    assert.ok(['number', 'state', 'sentence'].includes(f.as), `feature "${f.key}" has no shape`);
-    assert.notEqual(featureValue(f, snapshot), null, `feature "${f.key}" found nothing`);
+    assert.ok(f.source, `property "${f.key}" names no source`);
+    assert.ok(polled.has(f.source), `property "${f.key}" reads "${f.source}", which is not polled`);
+    assert.ok(['number', 'state', 'sentence'].includes(f.as), `property "${f.key}" has no shape`);
   }
 });
 
-test('the current is published in amperes, from a register in tenths', () => {
-  const current = FEATURES.find((f) => f.key === 'charging_current');
-  assert.equal(featureValue(current, snapshot), 13);
+test('no two properties share a key', () => {
+  const keys = FEATURES.map((f) => f.key);
+  assert.equal(new Set(keys).size, keys.length, `duplicate key in ${keys.join(', ')}`);
 });
 
-test('a missing reading leaves its feature out rather than writing a zero', () => {
-  // Nothing but the chargepoint state was read: the current has no source, so it is
-  // left out of the publication instead of being written as 0.
+test('the ampere reading is the only property the user can set', () => {
+  const writable = FEATURES.filter((f) => f.writable).map((f) => f.key);
+  assert.deepEqual(writable, ['charging_current']);
+});
+
+test('the state is offered as a sentence and as a code', () => {
+  const charge = FEATURES.find((f) => f.key === 'charge_state');
+  const code = FEATURES.find((f) => f.key === 'chargepoint_state');
+  const cable = FEATURES.find((f) => f.key === 'cable_state');
+  assert.equal(featureValue(charge, snapshot), t('state_available'));
+  assert.equal(featureValue(code, snapshot), 0);
+  assert.equal(featureValue(cable, snapshot), t('cable_unplugged'));
+});
+
+test('whether the car is charging is its own property', () => {
+  // This is the value the two scene triggers flank on. It has to be visible on the
+  // device page, and it has to be a number so a scene can compare on it.
+  const charging = FEATURES.find((f) => f.key === 'charging');
+  assert.equal(featureValue(charging, snapshot), 0);
+  assert.equal(featureValue(charging, { charging_state: 1 }), 1);
+});
+
+test('the units are converted once, where the row declares them', () => {
+  const at = (key) => featureValue(FEATURES.find((f) => f.key === key), snapshot);
+  // Milliamperes to amperes.
+  assert.equal(at('current_l1'), 0);
+  // Tenths of an ampere to amperes: 130 is 13 A.
+  assert.equal(at('charging_current'), 13);
+  // Tenths of a kilowatt-hour to kilowatt-hours.
+  assert.equal(at('meter_reading'), 12345.6);
+  // Watt-hours to kilowatt-hours.
+  assert.equal(at('session_energy'), 4.321);
+  // Volts and amperes pass through.
+  assert.equal(at('voltage_l1'), 230);
+  assert.equal(at('evse_max_current'), 16);
+});
+
+test('a missing reading leaves its property out rather than writing a zero', () => {
   const partial = { chargepoint_state: { value: 0, word: 'available' } };
-  const current = FEATURES.find((f) => f.key === 'charging_current');
-  assert.equal(featureValue(current, partial), null);
+  const power = FEATURES.find((f) => f.key === 'power');
+  const charging = FEATURES.find((f) => f.key === 'charging');
+  assert.equal(featureValue(power, partial), null);
+  assert.equal(featureValue(charging, partial), null);
 });
 
 test('the device says it polls, and at the rate it was given', () => {
@@ -198,7 +229,12 @@ test('the device says it polls, and at the rate it was given', () => {
   const device = buildDevice(fakeGladys, { serial: 'S1', model: 'M' }, snapshot, 30000);
   assert.equal(device.should_poll, true);
   assert.equal(device.poll_frequency, 30000);
+  // Every row finds something in this snapshot, so none is left out.
   assert.equal(device.features.length, FEATURES.length);
+  assert.equal(
+    device.features.find((f) => f.external_id.endsWith(':charging_current')).read_only,
+    false,
+  );
 });
 
 // --- the two scene triggers ---
@@ -266,8 +302,8 @@ test('the kilowatt-hour conversion uses the step of the source register', () => 
 //
 // THE READINGS HERE ARE WHOLE AMPERES
 // The snapshot key is documented as amperes for this helper's callers, so a reading of
-// 16 is 16 A. The register counts tenths, and that division happens once, in the poll
-// plan's scale — never here. Getting that wrong clamped every tap to the 6 A floor.
+// 16 is 16 A. The register counts tenths, and that division happens once, in the row's
+// scale — never here. Getting that wrong clamped every tap to the 6 A floor.
 
 test('the widget carries exactly two action values, and neither of them releases', () => {
   assert.deepEqual(Object.values(ACTION).sort(), ['current_down', 'current_up']);
@@ -310,6 +346,22 @@ test('a tap can never leave the range the device reported', () => {
 
 test('an unknown action is refused rather than quietly ignored', () => {
   assert.throws(() => chargerAction({ actionKey: 'release' }), /Unknown widget action/);
+});
+
+// --- the widget's own settings ---
+// The step comes from the instance settings, so two cards can step differently. A
+// setting nobody offered, or none at all, falls back instead of being trusted: the
+// value comes out of a stored dashboard, which outlives the code that wrote it.
+
+test('the step comes from the settings, inside the offered choices', () => {
+  assert.equal(stepFromSettings({ step: 2 }), 2);
+  assert.equal(stepFromSettings({ step: 5 }), 5);
+  assert.equal(stepFromSettings({}), 1);
+  assert.equal(stepFromSettings({ step: 3 }), 1, 'a step nobody offers falls back');
+  assert.equal(stepFromSettings({ step: 'x' }), 1);
+  for (const step of STEP_CHOICES) {
+    assert.equal(stepFromSettings({ step }), step);
+  }
 });
 
 // --- the labels ---
