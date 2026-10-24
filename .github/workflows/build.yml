@@ -10,13 +10,11 @@ name: Build
 #   workflow_call      the Release workflow calls this once it has bumped the
 #                      version and created the tag.
 #
-# NO `latest` TAG, ON PURPOSE
-# Every build here produces exactly the tag it was asked for and nothing else.
-# A `latest` that moved on its own would be offered to every Gladys user as an
-# update the moment it was pushed, which is not something a branch build should
-# ever be able to do. Gladys reads the tag named in the manifest's
-# `docker_image`, so a test image is reached by naming it — nothing else picks it
-# up.
+# RELEASE TAGS
+# A release build (workflow_call from release.yml) publishes both the versioned
+# tag and `latest`. This lets Gladys install/update the integration through the
+# stable manifest tag. Manual branch builds and direct version-tag builds remain
+# single-tag builds, so test builds never move `latest`.
 #
 # THE MANUAL TAG
 # It defaults to the branch name, so `fix-netz` produces
@@ -72,6 +70,16 @@ jobs:
           # A branch name may hold more, so anything else becomes a dash.
           tag="$(printf '%s' "$tag" | tr -c 'A-Za-z0-9._-' '-')"
           echo "value=$tag" >> "$GITHUB_OUTPUT"
+          # Only the Release workflow sets inputs.version. In that case, publish
+          # latest alongside the immutable version tag. Manual/test builds do not.
+          {
+            echo "tags<<EOF"
+            echo "ghcr.io/${GITHUB_REPOSITORY}:$tag"
+            if [ -n "${{ inputs.version }}" ]; then
+              echo "ghcr.io/${GITHUB_REPOSITORY}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           echo "Building image tag: $tag"
 
       - uses: docker/setup-qemu-action@v3
@@ -88,5 +96,5 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          # One tag, always. No `latest`, see the note at the top.
-          tags: ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.value }}
+          # Release builds receive two tags; all other build paths receive one.
+          tags: ${{ steps.tag.outputs.tags }}
