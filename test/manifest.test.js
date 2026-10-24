@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { SCENE_ACTIONS, TRIGGER, chargingEvents, kilowattHours } from '../src/scenes.js';
 import { CHARGER_WIDGET, chargerAction, ACTION } from '../src/widgets.js';
-import { stateSentence, t } from '../src/labels.js';
-import { CHARGEPOINT_STATE } from '../src/vestel/registers.js';
+import { stateSentence, cableSentence, deviceSentence, t } from '../src/labels.js';
+import { CHARGEPOINT_STATE, CABLE_STATE } from '../src/vestel/registers.js';
 
 const manifest = JSON.parse(
   await readFile(new URL('../gladys-assistant-integration.json', import.meta.url), 'utf8'),
@@ -161,9 +161,15 @@ test('the kilowatt-hour conversion uses the step of the source register', () => 
 // The card returns an intention and the caller applies it. That split is only
 // worth anything if the intention itself is right, which is what these cover.
 // There are two buttons, and they are the only control this device has.
+//
+// THE VALUES ARE COMPARED, NOT THE PROPERTY NAMES
+// `Object.keys(ACTION)` returns the identifiers on the LEFT of the definition —
+// `CURRENT_DOWN`, `CURRENT_UP` — and comparing those to the strings tested the
+// wrong half of the object. The left-hand names are ours to choose; the strings
+// are the contract a stored dashboard depends on, so those are what is checked.
 
-test('the widget carries exactly two actions, and neither of them releases', () => {
-  assert.deepEqual(Object.keys(ACTION).sort(), ['current_down', 'current_up']);
+test('the widget carries exactly two action values, and neither of them releases', () => {
+  assert.deepEqual(Object.values(ACTION).sort(), ['current_down', 'current_up']);
 });
 
 test('a tap on + moves the current up by one ampere from what the user sees', () => {
@@ -210,11 +216,12 @@ test('an unknown action is refused rather than quietly ignored', () => {
 // literal key shown to the user. This caught exactly that once, in the
 // WattWächter integration.
 //
-// THE STATE IS A NUMBER NOW
-// The device's state is published as a number (see src/devices/wallbox.js), which
-// is the only shape Gladys accepts for it. So the sentence lookup is tested with
-// NUMBERS — one per state the specification lists — and not with the word, which
-// is what this test used to pass and would have kept a dead path green.
+// THE STATE ARRIVES AS A NUMBER AND THE TEXTS ARE KEYED BY WORD
+// The device's state is published as a number (see src/devices/wallbox.js) — the
+// only shape Gladys accepts for it — while the texts in src/labels.js are keyed by
+// word. Every state of the specification is therefore checked by its NUMBER, and
+// none of them may come back as the bare key. That is the check the first real
+// start failed: the card showed `state_0`.
 
 test('every state code the device can report has a sentence', () => {
   for (const code of Object.keys(CHARGEPOINT_STATE)) {
@@ -224,6 +231,24 @@ test('every state code the device can report has a sentence', () => {
   }
 });
 
+test('every cable code the device can report has a sentence', () => {
+  for (const code of Object.keys(CABLE_STATE)) {
+    const sentence = cableSentence({ cable_state: Number(code) });
+    assert.notEqual(sentence, `cable_${code}`, `no sentence for the cable code ${code}`);
+    assert.ok(sentence.length > 5, `the sentence for cable ${code} is too short`);
+  }
+});
+
 test('an unknown state code says so instead of showing the key', () => {
   assert.equal(stateSentence({ chargepoint_state: 42 }), t('state_unknown'));
+  assert.equal(cableSentence({ cable_state: 42 }), t('state_unknown'));
+  assert.equal(stateSentence({ chargepoint_state: null }), t('state_unknown'));
+});
+
+test('the charging sentence names the power, and only that one does', () => {
+  const charging = deviceSentence({ chargepoint_state: 2, power: 11000 });
+  assert.match(charging, /11 kW/);
+
+  const available = deviceSentence({ chargepoint_state: 0, power: 0 });
+  assert.equal(available, t('state_available'));
 });
