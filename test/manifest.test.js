@@ -226,9 +226,9 @@ test('the device says it polls, and at the rate it was given', () => {
   const fakeGladys = {
     externalIds: () => ({ device: 'ext:x:y', feature: (k) => `ext:x:y:${k}` }),
   };
-  const device = buildDevice(fakeGladys, { serial: 'S1', model: 'M' }, snapshot, 30000);
+  const device = buildDevice(fakeGladys, { serial: 'S1', model: 'M' }, snapshot, 60000);
   assert.equal(device.should_poll, true);
-  assert.equal(device.poll_frequency, 30000);
+  assert.equal(device.poll_frequency, 60000);
   // Every row finds something in this snapshot, so none is left out.
   assert.equal(device.features.length, FEATURES.length);
   assert.equal(
