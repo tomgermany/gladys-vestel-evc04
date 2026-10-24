@@ -23,11 +23,10 @@ export const DEFAULT_CONFIG = {
   // use. A wrong unit id is not an error the device reports: it simply does not
   // answer.
   unit_id: 255,
-  // MILLISECONDS, as Gladys works with: only the values out of
-  // DEVICE_POLL_FREQUENCIES (1000, 2000, 10000, 15000, 30000, 60000) are
-  // accepted. Half a minute is the default: a charge is a slow process, and the
-  // scene triggers still react within half a minute.
-  poll_frequency: 30000,
+  // The user chooses a realistic interval in minutes. The internal frequency is
+  // converted to milliseconds for the elapsed-time check in index.js.
+  poll_interval_minutes: 5,
+  poll_frequency: 5 * 60 * 1000,
   // The current the wallbox falls back to when the heartbeat stops. The smallest
   // value a car accepts is the safe choice: a released control should mean
   // "charge slowly", not "charge uncontrolled".
@@ -44,7 +43,17 @@ export function normalizeConfig(raw = {}) {
     host: String(raw.host ?? DEFAULT_CONFIG.host).trim(),
     modbus_port: Number(raw.modbus_port ?? DEFAULT_CONFIG.modbus_port),
     unit_id: Number(raw.unit_id ?? DEFAULT_CONFIG.unit_id),
-    poll_frequency: Number(raw.poll_frequency ?? DEFAULT_CONFIG.poll_frequency),
+    // Ignore the old millisecond-based setting if it is still stored by Gladys.
+    // The new field is explicit and offers only 1, 5, 15, 30 or 60 minutes.
+    poll_interval_minutes: [1, 5, 15, 30, 60].includes(
+      Number(raw.poll_interval_minutes ?? DEFAULT_CONFIG.poll_interval_minutes),
+    )
+      ? Number(raw.poll_interval_minutes ?? DEFAULT_CONFIG.poll_interval_minutes)
+      : DEFAULT_CONFIG.poll_interval_minutes,
+    poll_frequency:
+      ([1, 5, 15, 30, 60].includes(Number(raw.poll_interval_minutes))
+        ? Number(raw.poll_interval_minutes)
+        : DEFAULT_CONFIG.poll_interval_minutes) * 60 * 1000,
     failsafe_current: Number(raw.failsafe_current ?? DEFAULT_CONFIG.failsafe_current),
     failsafe_timeout: Number(raw.failsafe_timeout ?? DEFAULT_CONFIG.failsafe_timeout),
   };
