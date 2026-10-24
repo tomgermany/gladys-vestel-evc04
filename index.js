@@ -35,12 +35,16 @@ const gladys = new GladysIntegration();
 /**
  * The configuration in force, replaced on every change.
  *
- * IT IS READ AT STARTUP, NOT WHEN A HANDLER FIRES
- * The handlers below are live the moment they are registered, and Gladys sends a scan
- * request as part of creating the device. If the address were only applied later, such
- * a request would reach a client that still carried the `host: ''` of the defaults —
- * which is exactly the failure that was seen in the container: a connection to `:502:`
- * with the user's address correctly entered in the Configuration screen.
+ * IT STARTS AS THE DEFAULTS, AND THE REAL VALUES ARRIVE ONCE THE SDK IS CONNECTED
+ * This is the shape the official template uses, and the reason is not stylistic:
+ * `getConfig()` talks to the host API, so it needs the WebSocket to be authenticated.
+ * An earlier version of this file called it BEFORE `connect()`, the call failed, and
+ * `applyConfig()` therefore never ran — leaving the client on the `host: ''` of the
+ * defaults. The container then dialled `:502:` while the user's address sat correctly
+ * filled in on the Configuration screen.
+ *
+ * So: defaults here, real configuration in the `connected` handler below, and
+ * `connect()` last.
  */
 let config = normalizeConfig(DEFAULT_CONFIG);
 
@@ -132,7 +136,7 @@ gladys.onScanRequest(async () => {
     host: config.host,
   };
   const limits = await client.readLimits().catch(() => null);
-  return [buildDevice(gladys, deviceInfo, await client.readAll(), config.poll_frequency, limits)];
+  return buildDevice(gladys, deviceInfo, await client.readAll(), config.poll_frequency, limits);
 });
 
 /** One poll, on the rate the user chose. */
@@ -249,26 +253,40 @@ gladys.handleShutdown(async () => {
 });
 
 /**
- * Startup.
+ * Every (re)connection: fetch the configuration the user filled in, apply it, and
+ * report whether the wallbox answers.
  *
- * THE CONFIGURATION IS READ AND APPLIED BEFORE THE CONNECTION IS OPENED, and before
- * anything can call a handler that reads the device. `getConfig()` needs the SDK to be
- * connected, so the order is: config, handlers, connect — and the handlers only ever
- * fire after `connect()` has resolved.
+ * WHY THIS IS A CONNECTED HANDLER AND NOT A LINE IN A main()
+ * `getConfig()` needs an authenticated connection, so it cannot run before
+ * `connect()`. The official template does exactly this, and for the same reason. The
+ * handler also runs again after every reconnection, which is what keeps the address
+ * current if the container is restarted by the supervisor.
  */
-async function main() {
-  await gladys.connect();
-  config = normalizeConfig(await gladys.getConfig());
-  await applyConfig(config);
-  gladys.onConfigUpdated(async (next) => {
-    await applyConfig(normalizeConfig(next));
-  });
-  log.info(`Vestel EVC04 Integration bereit (${config.host || 'keine Adresse'}).`);
-  await reportConnection();
-}
+gladys.on('connected', async () => {
+  try {
+    config = normalizeConfig(await gladys.getConfig());
+    await applyConfig(config);
+    log.info(`Vestel EVC04 Integration bereit (${config.host || 'keine Adresse'}).`);
+    await reportConnection();
+  } catch (err) {
+    log.error('Konfiguration konnte nicht angewendet werden', err);
+  }
+});
 
-main().catch((err) => {
-  // A failure here must not take the container down with a second failure. This is
-  // the line that used to crash, because it called a method the SDK does not have.
-  log.error('Start fehlgeschlagen', err);
+/**
+ * Configuration updated by the user in the Configuration screen.
+ *
+ * The whole configuration arrives, not a patch, so it replaces the one in force. A
+ * changed address closes the old socket first — see applyConfig.
+ */
+gladys.onConfigUpdated(async (next) => {
+  await applyConfig(normalizeConfig(next));
+});
+
+/**
+ * Startup: nothing but the connection. Every handler above is registered first, and
+ * the connection is what triggers them.
+ */
+gladys.connect().catch((err) => {
+  log.error('Initiale Verbindung fehlgeschlagen', err);
 });
