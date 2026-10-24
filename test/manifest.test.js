@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { SCENE_ACTIONS, TRIGGER, chargingEvents, kilowattHours } from '../src/scenes.js';
-import { CHARGER_WIDGET, chargerAction } from '../src/widgets.js';
+import { CHARGER_WIDGET, chargerAction, ACTION } from '../src/widgets.js';
+import { stateSentence, t } from '../src/labels.js';
+import { CHARGEPOINT_STATE } from '../src/vestel/registers.js';
 
 const manifest = JSON.parse(
   await readFile(new URL('../gladys-assistant-integration.json', import.meta.url), 'utf8'),
@@ -50,6 +52,28 @@ test('every scene action in the code is declared in the manifest, and vice versa
   for (const key of Object.keys(SCENE_ACTIONS)) {
     assert.ok(declared.includes(key), `scene action "${key}" is not declared in the manifest`);
   }
+});
+
+// --- the shape of this device -------------------------------------------------
+// A wallbox has no start and no stop: a charge begins when the vehicle accepts the
+// current. These two tests hold that shape in place, because it is the kind of
+// thing an edit adds back without thinking — and a "release" action that writes a
+// number is not a release.
+
+test('the device offers exactly one scene action, and it sets the current', () => {
+  assert.deepEqual(Object.keys(SCENE_ACTIONS), ['set_charging_current']);
+  assert.equal(
+    (manifest.scene_actions ?? []).length,
+    1,
+    'the manifest must declare exactly the one action this device can carry out',
+  );
+});
+
+test('there is no release action, in the code nor in the manifest', () => {
+  assert.equal(SCENE_ACTIONS.release_charging_current, undefined);
+  assert.equal(ACTION.RELEASE, undefined);
+  const declared = (manifest.scene_actions ?? []).map((action) => action.key);
+  assert.ok(!declared.includes('release_charging_current'));
 });
 
 test('both triggers the code fires are declared', () => {
@@ -136,10 +160,15 @@ test('the kilowatt-hour conversion uses the step of the source register', () => 
 // --- the widget buttons ------------------------------------------------------
 // The card returns an intention and the caller applies it. That split is only
 // worth anything if the intention itself is right, which is what these cover.
+// There are two buttons, and they are the only control this device has.
+
+test('the widget carries exactly two actions, and neither of them releases', () => {
+  assert.deepEqual(Object.keys(ACTION).sort(), ['current_down', 'current_up']);
+});
 
 test('a tap on + moves the current up by one ampere from what the user sees', () => {
   const intent = chargerAction({
-    actionKey: 'current_up',
+    actionKey: ACTION.CURRENT_UP,
     params: { step: 1 },
     state: { charging_current: 16 },
   });
@@ -148,35 +177,53 @@ test('a tap on + moves the current up by one ampere from what the user sees', ()
 
 test('a tap on − moves the current down and stops at the floor', () => {
   const down = chargerAction({
-    actionKey: 'current_down',
+    actionKey: ACTION.CURRENT_DOWN,
     params: { step: 1 },
     state: { charging_current: 16 },
   });
   assert.equal(down.current, 15);
 
   const floor = chargerAction({
-    actionKey: 'current_down',
+    actionKey: ACTION.CURRENT_DOWN,
     params: { step: 1 },
     state: { charging_current: 6 },
   });
   assert.equal(floor.current, 6);
 });
 
-test('releasing without a controlled current is refused rather than ignored', () => {
-  assert.throws(() => chargerAction({ actionKey: 'release', controlled: false }), /control/);
+test('a tap can never leave the range the device reported', () => {
+  const intent = chargerAction({
+    actionKey: ACTION.CURRENT_UP,
+    params: { step: 1 },
+    state: { charging_current: 16 },
+    limits: { min: 6, max: 16 },
+  });
+  assert.equal(intent.current, 16, 'a tap above the ceiling must stay at the ceiling');
+});
+
+test('an unknown action is refused rather than quietly ignored', () => {
+  assert.throws(() => chargerAction({ actionKey: 'release' }), /Unknown widget action/);
 });
 
 // --- the labels --------------------------------------------------------------
 // `t()` falls back to the key itself, so a missing text is not a crash: it is the
 // literal key shown to the user. This caught exactly that once, in the
 // WattWächter integration.
+//
+// THE STATE IS A NUMBER NOW
+// The device's state is published as a number (see src/devices/wallbox.js), which
+// is the only shape Gladys accepts for it. So the sentence lookup is tested with
+// NUMBERS — one per state the specification lists — and not with the word, which
+// is what this test used to pass and would have kept a dead path green.
 
-test('every state the device can report has a sentence', async () => {
-  const { stateSentence } = await import('../src/labels.js');
-  const { CHARGEPOINT_STATE } = await import('../src/vestel/registers.js');
-  for (const word of Object.values(CHARGEPOINT_STATE)) {
-    const sentence = stateSentence({ chargepoint_state: word });
-    assert.notEqual(sentence, `state_${word}`, `no sentence for the state "${word}"`);
-    assert.ok(sentence.length > 5, `the sentence for "${word}" is too short to be useful`);
+test('every state code the device can report has a sentence', () => {
+  for (const code of Object.keys(CHARGEPOINT_STATE)) {
+    const sentence = stateSentence({ chargepoint_state: Number(code) });
+    assert.notEqual(sentence, `state_${code}`, `no sentence for the state code ${code}`);
+    assert.ok(sentence.length > 5, `the sentence for ${code} is too short to be useful`);
   }
+});
+
+test('an unknown state code says so instead of showing the key', () => {
+  assert.equal(stateSentence({ chargepoint_state: 42 }), t('state_unknown'));
 });
