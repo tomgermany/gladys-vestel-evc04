@@ -46,13 +46,13 @@ const version = nextVersion(pkg.version, bump);
 pkg.version = version;
 writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
 
-// --- Manifest: die Version UND der Tag im Image ------------------------------
-// Beide gehoeren zusammen: ein Manifest, das die neue Version nennt, aber noch auf
-// das alte Image zeigt, ist genau der halbe Zustand, den es zu vermeiden gilt.
+// --- Manifest: Version hochzaehlen, Image auf latest halten ------------------
+// Die Manifest-Version wird weiterhin bei jedem Release erhoeht. Das Image bleibt
+// auf latest, damit Gladys bei einem Update immer den neuesten Release zieht.
 const manifestPath = 'gladys-assistant-integration.json';
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 manifest.version = version;
-manifest.docker_image = manifest.docker_image.replace(/:([^:/]+)$/, `:${version}`);
+manifest.docker_image = manifest.docker_image.replace(/:([^:/]+)$/, ':latest');
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 // --- CHANGELOG ---------------------------------------------------------------
