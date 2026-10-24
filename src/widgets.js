@@ -20,25 +20,30 @@
 // `onWidgetAction`, a tap on a button is answered by the SDK's default reply to an
 // unhandled message and the button does nothing.
 //
+// THE SETTINGS ARE READ, NOT IGNORED
+// `onWidgetGet` is called with the widget instance's settings, and they reach this
+// file as `settings`. The WattWächter reads them to decide which period its card
+// shows; the same mechanism decides the STEP of the current buttons here, so two
+// copies of the card can step by 1 A and 2 A. A parameter a function accepts and
+// then does not look at is what a lint rule exists to catch, and it was right to.
+//
 // THE BUDGET — why this file counts its components
 // A card takes at most 8 components, and among them at most 4 BUTTONS, 6 value
 // tiles, 2 texts and 1 status list. Anything past a cap is DROPPED, in content
 // order, silently. The sentence plus the current tile plus the two buttons come to
-// four of the eight; everything else that used to be on this card was moved to the
-// device properties, or removed.
+// four of the eight.
 //
 // WHAT THE CARD SHOWS
 //   - the state as ONE sentence, in a status row: "Ich lade aktuell mit 11 kW."
 //   - the charging current as a value tile, bound to the feature this integration
 //     publishes, so it follows the history without a refresh being wired here.
-//   - two buttons, + 1 A and − 1 A, which move the setpoint inside what the device
-//     and its cable allow.
+//   - two buttons which move the setpoint inside what the device and its cable
+//     allow, by the step the widget's settings ask for.
 //
 // WHY THE TILE IS BOUND TO A FEATURE AND NOT TO A NUMBER
 // A tile with `device_feature` carries the external id of a published feature, and
 // Gladys reads that feature's own value and history. It therefore stays right by
-// itself. The WattWächter card makes the same distinction and says so in the same
-// words: a tile bound to a feature needs nothing from here.
+// itself.
 //
 // THE BUTTON TARGET COMES FROM THE SNAPSHOT, NOT FROM THE PUBLISHED FEATURE
 // Gating the buttons on the published feature meant they were absent exactly when
@@ -67,8 +72,11 @@ export const ACTION = {
   CURRENT_UP: 'current_up',
 };
 
-/** How many amperes one tap of the current buttons moves. */
+/** How many amperes one tap moves when the widget's settings say nothing. */
 export const CURRENT_STEP = 1;
+
+/** The step values a widget instance may choose, in amperes. */
+export const STEP_CHOICES = [1, 2, 5];
 
 /**
  * The floor of the charging current, in amperes.
@@ -87,6 +95,23 @@ export const MIN_CURRENT = 6;
  */
 export function hasControl(controlled) {
   return controlled !== null && controlled !== undefined && controlled !== false;
+}
+
+/**
+ * The step one tap of a button moves.
+ *
+ * WHY IT IS READ FROM THE SETTINGS RATHER THAN FIXED
+ * The widget's settings are per INSTANCE, so two cards on two dashboards can move
+ * the current by different amounts — the same mechanism the WattWächter uses to
+ * let each copy of its card show its own period. A setting that is not offered
+ * among STEP_CHOICES, or one that is missing, falls back to the default instead of
+ * being trusted: the value comes from a stored dashboard, and a stored dashboard
+ * outlives the code that wrote it.
+ */
+export function stepFromSettings(settings = {}) {
+  const step = Number(settings?.step ?? settings?.current_step);
+  if (!Number.isFinite(step) || step <= 0) return CURRENT_STEP;
+  return STEP_CHOICES.includes(step) ? step : CURRENT_STEP;
 }
 
 /**
@@ -115,7 +140,7 @@ export const CURRENT_READING = 'charging_current';
  * @param {object|null} ctx.device { name, serial, model, host }
  * @param {object} ctx.ids { charging_current } external id of the published feature
  * @param {number|false|null} ctx.controlled the charging current we have set
- * @param {object} ctx.settings the widget instance settings
+ * @param {object} ctx.settings the widget instance settings, see stepFromSettings
  * @param {Function} ctx.t labels, per language
  * @param {Function} ctx.sentence the state as one sentence
  */
@@ -135,6 +160,7 @@ export function buildChargerContent({
     };
   }
 
+  const step = stepFromSettings(settings);
   const components = [];
 
   // 1. THE SENTENCE. One status row, and the first thing a reader sees.
@@ -163,26 +189,25 @@ export function buildChargerContent({
     });
   }
 
-  // 3. The control: two buttons that move the charging current one ampere at a
-  //    time, inside what the device and its cable allow. There is nothing else to
-  //    steer on this device.
+  // 3. The control: two buttons which move the charging current by the step the
+  //    widget's settings ask for, inside what the device and its cable allow.
   //
   //    Gated on the READING, not on the published feature — see the note at the top
   //    of this file. This is what makes the card usable on a fresh installation.
   if (hasControl(state[CURRENT_READING])) {
     components.push({
       type: 'button',
-      label: '− 1 A',
+      label: `− ${step} A`,
       icon: 'minus',
       style: 'secondary',
-      action: { key: ACTION.CURRENT_DOWN, params: { step: CURRENT_STEP } },
+      action: { key: ACTION.CURRENT_DOWN, params: { step } },
     });
     components.push({
       type: 'button',
-      label: '+ 1 A',
+      label: `+ ${step} A`,
       icon: 'plus',
       style: 'secondary',
-      action: { key: ACTION.CURRENT_UP, params: { step: CURRENT_STEP } },
+      action: { key: ACTION.CURRENT_UP, params: { step } },
     });
   }
 
@@ -191,10 +216,14 @@ export function buildChargerContent({
 
 /** The colour of the state row: a fault is not a neutral event. */
 function stateColor(state) {
-  const code = typeof state.chargepoint_state === 'object' && state.chargepoint_state !== null
-    ? state.chargepoint_state.value
-    : state.chargepoint_state;
-  const fault = state.fault_code && typeof state.fault_code === 'object' ? state.fault_code.value : state.fault_code;
+  const code =
+    typeof state.chargepoint_state === 'object' && state.chargepoint_state !== null
+      ? state.chargepoint_state.value
+      : state.chargepoint_state;
+  const fault =
+    state.fault_code && typeof state.fault_code === 'object'
+      ? state.fault_code.value
+      : state.fault_code;
   if (fault) return 'danger';
   if (code === 8) return 'danger';
   if (state.charging_state === 1) return 'success';
@@ -210,7 +239,9 @@ function stateColor(state) {
  * being able to write to a device on its own.
  *
  * `step` moves the current from the value the user sees, not from a value
- * remembered somewhere else: two taps in a row then give two different currents.
+ * remembered somewhere else: two taps in a row then give two different currents. It
+ * arrives in the button's own params, which is where the widget instance's setting
+ * ends up.
  *
  * THE CEILING IS OPTIONAL, AND THAT IS DELIBERATE
  * When the caller passes the limits it read from the device, a tap can never leave

@@ -2,16 +2,16 @@
 // Entry point (the "wiring"): it connects the pieces and holds no logic.
 //
 // PORTED FROM THE WATTWAECHTER INTEGRATION, WHICH RUNS
-// This file follows the shape of `gladys-wattwaechter/index.js`, because that one
-// is a working integration against the same SDK generation and the same Gladys.
-// Three mechanisms are taken over whole, and each cost that project a real failure
-// before it was fixed:
+// This file follows the shape of `gladys-wattwaechter/index.js`, because that one is
+// a working integration against the same SDK generation and the same Gladys. Three
+// mechanisms are taken over whole, and each cost that project a real failure before
+// it was fixed:
 //
 //   THE CONNECT GATE (`connecting`)
 //   `connected` and `onConfigUpdated` both connect, and on a restart they fire
-//   within seconds of each other. Two competing connect attempts leave two
-//   sockets open — on a device that allows ONE Modbus master, the second attempt
-//   is the one that fails.
+//   within seconds of each other. Two competing connect attempts leave two sockets
+//   open — on a device that allows ONE Modbus master, the second attempt is the one
+//   that fails.
 //
 //   AN IDEMPOTENT CONNECT (`establish()`)
 //   The connection test reads the configuration, that round trip makes Gladys
@@ -25,12 +25,11 @@
 //   device.
 //
 // A HANDLER FOR EVERY MESSAGE, OR GLADYS SAYS "not implemented"
-// A widget is not drawn by the integration: Gladys asks for its content and
-// renders the answer. With no `onWidgetGet` registered for the widget key, Gladys
-// receives the SDK's default answer to an unhandled message — the literal words
-// "not implemented" on the card — while every value beside it is right. Both
-// widget handlers are therefore registered here, under the key the manifest
-// declares.
+// A widget is not drawn by the integration: Gladys asks for its content and renders
+// the answer. With no `onWidgetGet` registered for the widget key, Gladys receives
+// the SDK's default answer to an unhandled message — the literal words "not
+// implemented" on the card — while every value beside it is right. Both widget
+// handlers are therefore registered here, under the key the manifest declares.
 //
 // THE ONE ORDERING RULE
 // Every handler is registered BEFORE `gladys.connect()`, and the configuration is
@@ -45,8 +44,23 @@ import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { DEFAULT_CONFIG, normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
 import { AliveControl } from './src/alive.js';
-import { buildDevice, deviceExternalId, platformId, publishAll, PLATFORM_TYPE } from './src/devices/wallbox.js';
-import { CHARGER_WIDGET, buildChargerContent, chargerAction, ACTION, CURRENT_READING } from './src/widgets.js';
+import {
+  buildDevice,
+  deviceExternalId,
+  platformId,
+  publishAll,
+  PLATFORM_TYPE,
+} from './src/devices/wallbox.js';
+// `ACTION` is deliberately not imported here. The tap is worked out by
+// `chargerAction` from the action key the SDK delivers, and the keys themselves are
+// the card's business — index.js never names one. Importing it only produced an
+// unused variable.
+import {
+  CHARGER_WIDGET,
+  buildChargerContent,
+  chargerAction,
+  CURRENT_READING,
+} from './src/widgets.js';
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { t, deviceSentence } from './src/labels.js';
 import { CONTROL } from './src/vestel/registers.js';
@@ -111,16 +125,15 @@ async function connectDevice() {
  *
  * KEEPING A CONNECTION THAT IS STILL GOOD
  * The conditions are deliberately narrow: there must be a live socket, and it must
- * point at the configured host and port. A connection whose peer has gone, or one
- * a failed read has already dropped, is NOT kept — those are the cases where a
- * fresh build is genuinely needed, and skipping them would leave the integration
- * talking to a dead handle.
+ * point at the configured host and port. A connection whose peer has gone, or one a
+ * failed read has already dropped, is NOT kept — those are the cases where a fresh
+ * build is genuinely needed.
  *
  * CLOSING BEFORE OPENING, AND WAITING FOR IT
  * The EVC04 allows exactly ONE Modbus master. Giving the old socket back with
  * `destroy()` returns at once and the device only frees the slot when the FIN
- * arrives, so a new connect landing in that gap is refused. `close()` waits for
- * the socket to report down.
+ * arrives, so a new connect landing in that gap is refused. `close()` waits for the
+ * socket to report down.
  */
 async function establish() {
   const sameTarget = Boolean(
@@ -164,6 +177,7 @@ async function establish() {
       host: config.host,
       serial: info.serial,
       model: info.model,
+      firmware: info.firmware,
       name: 'Wallbox',
     };
     client = connection;
@@ -181,8 +195,8 @@ async function establish() {
     await gladys.setConnectionStatus(true);
     return true;
   } catch (err) {
-    // A failed attempt must not leave a half-open socket behind: this device
-    // allows one master, and a stranded socket would block the next attempt.
+    // A failed attempt must not leave a half-open socket behind: this device allows
+    // one master, and a stranded socket would block the next attempt.
     client?.transport?.reset();
     client = null;
     logger.error(`Wallbox connection failed (${config.host}): ${err.message}`);
@@ -202,14 +216,14 @@ async function establish() {
  * Run `task` on the one connection this process owns, and return its answer.
  *
  * WHY THE RETRY EXISTS
- * When the container is recreated, the device-side socket can survive until its
- * own timeout, and the first attempt then meets a slot that is still occupied. One
+ * When the container is recreated, the device-side socket can survive until its own
+ * timeout, and the first attempt then meets a slot that is still occupied. One
  * deliberate retry on a fresh connection rides that out.
  *
  * WHY THE ORIGINAL ERROR IS CARRIED ALONG
- * When the retry fails as well, the error thrown here would otherwise say only
- * "no connection" — the symptom, not the cause. The first error is attached as
- * `cause`, so a reader of the log sees what was tried and why it broke.
+ * When the retry fails as well, the error thrown here would otherwise say only "no
+ * connection" — the symptom, not the cause. The first error is attached as `cause`,
+ * so a reader of the log sees what was tried and why it broke.
  */
 async function withConnection(task) {
   if (!client) {
@@ -312,7 +326,7 @@ gladys.onSetValue(async (dev, feature, value) => {
     const current = Math.min(limits.max, Math.max(limits.min, Math.round(wanted)));
     await connection.writeRegister(CONTROL.charging_current, current);
     control.set(current);
-    logger.info(`Setpoint ${current} A written to ${control ? '5004' : '?'}`);
+    logger.info(`Setpoint ${current} A written to register 5004`);
   });
   await refresh().catch(() => {});
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
@@ -377,9 +391,9 @@ gladys.onSceneAction('set_charging_current', async (fields) => {
 /**
  * Manifest action "Test the connection": the button in the Configuration screen.
  *
- * It answers in words rather than only in the log. It reads over the connection
- * this process already owns: a client of its own would be a second master, which
- * this device does not allow.
+ * It answers in words rather than only in the log. It reads over the connection this
+ * process already owns: a client of its own would be a second master, which this
+ * device does not allow.
  */
 gladys.onAction('test_connection', async () => {
   await readConfig().catch(() => {});
