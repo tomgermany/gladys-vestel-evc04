@@ -45,12 +45,18 @@ The integration sets the permitted charging current through Modbus register `500
 
 ## Gladys scenes
 
-Two events are provided:
+The integration provides **two scene triggers** and **one scene action**.
+
+### Scene triggers
 
 - **Wallbox charging** — triggered when the wallbox transitions into the charging state.
 - **Wallbox charging ended** — triggered when it transitions out of the charging state.
 
-Depending on the event, variables include measurements such as power, charging current, meter reading, session energy, and duration. Scenes can also use **Set charging current** to request a current value.
+Depending on the trigger, variables include measurements such as power, charging current, meter reading, session energy, and duration.
+
+### Scene action
+
+- **Set charging current** — a scene can use this action to request a charging-current value in amperes. The value is limited to a minimum of **6 A** and the maximum permitted by the wallbox and cable.
 
 ## Troubleshooting
 
