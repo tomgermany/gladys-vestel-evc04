@@ -19,6 +19,15 @@ test('normalizeConfig keeps user values and coerces form strings', () => {
   assert.equal(config.host, '192.168.1.9');
   assert.equal(config.unit_id, 255);
   assert.equal(config.failsafe_timeout, 30);
+  assert.equal(config.poll_interval_minutes, 5);
+  assert.equal(config.poll_frequency, 300000);
+});
+
+test('normalizeConfig converts the offered minute intervals to milliseconds', () => {
+  assert.equal(normalizeConfig({ poll_interval_minutes: '1' }).poll_frequency, 60000);
+  assert.equal(normalizeConfig({ poll_interval_minutes: '15' }).poll_frequency, 900000);
+  assert.equal(normalizeConfig({ poll_interval_minutes: '60' }).poll_frequency, 3600000);
+  assert.equal(normalizeConfig({ poll_interval_minutes: '7' }).poll_interval_minutes, 5);
 });
 
 // --- the frame builders ------------------------------------------------------
