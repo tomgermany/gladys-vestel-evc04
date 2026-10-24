@@ -81,7 +81,7 @@
       "key": "poll_interval_minutes",
       "type": "select",
       "required": false,
-      "default": 5,
+      "default": "5",
       "label": {
         "de": "Aktualisierungsintervall in Minuten",
         "en": "Refresh interval in minutes",
