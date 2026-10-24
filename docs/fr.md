@@ -45,12 +45,18 @@ L'intégration règle le courant autorisé via le registre Modbus `5004`. La bor
 
 ## Scènes Gladys
 
-Deux événements sont disponibles :
+L'intégration propose **deux déclencheurs de scène** et **une action de scène**.
+
+### Déclencheurs de scène
 
 - **La borne charge** — déclenché lors du passage à l'état de charge.
 - **Fin de charge de la borne** — déclenché lors de la sortie de cet état.
 
-Selon l'événement, des variables telles que la puissance, le courant de charge, l'index du compteur, l'énergie de la session et sa durée sont disponibles. Une scène peut également utiliser l'action **Définir le courant de charge**.
+Selon le déclencheur, des variables telles que la puissance, le courant de charge, l'index du compteur, l'énergie de la session et sa durée sont disponibles.
+
+### Action de scène
+
+- **Définir le courant de charge** — cette action permet à une scène de définir le courant souhaité en ampères. La valeur est limitée à **6 A minimum** et au maximum autorisé par la borne et le câble.
 
 ## Dépannage
 
