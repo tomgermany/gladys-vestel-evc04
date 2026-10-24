@@ -45,12 +45,18 @@ Der erlaubte Ladestrom wird über das Modbus-Register `5004` eingestellt. Die Wa
 
 ## Gladys-Szenen
 
-Es gibt zwei Ereignisse:
+Die Integration stellt **zwei Szenen-Auslöser** und **eine Szenen-Aktion** bereit.
+
+### Szenen-Auslöser
 
 - **Wallbox lädt** – wird beim Wechsel in den Ladezustand ausgelöst.
 - **Wallbox beendet** – wird beim Wechsel aus dem Ladezustand ausgelöst.
 
-Je nach Ereignis stehen Variablen wie Leistung, Ladestrom, Zählerstand, Sitzungsenergie und Dauer zur Verfügung. Szenen können außerdem die Aktion **Ladestrom setzen** verwenden.
+Je nach Auslöser stehen Variablen wie Leistung, Ladestrom, Zählerstand, Sitzungsenergie und Dauer zur Verfügung.
+
+### Szenen-Aktion
+
+- **Ladestrom setzen** – eine Szene kann damit den gewünschten Ladestrom in Ampere vorgeben. Der Wert wird auf mindestens **6 A** und höchstens auf den von Wallbox und Kabel erlaubten Maximalstrom begrenzt.
 
 ## Fehlerbehebung
 
