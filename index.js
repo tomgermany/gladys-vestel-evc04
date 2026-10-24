@@ -171,6 +171,10 @@ async function establish() {
     });
     // Tolerated problems are logged, never thrown.
     connection.warn = (what, err) => logger.warn(`Tolerated (${what}): ${err.message}`);
+    // The Modbus layer uses this separate hook for successful raw meter reads.
+    // Keeping it at info level makes the temporary diagnostic visible without
+    // incorrectly classifying a valid register response as a warning.
+    connection.diagnostic = (message) => logger.info(message);
     const info = await connection.connect();
 
     device = {
