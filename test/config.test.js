@@ -26,17 +26,17 @@ test('normalizeConfig keeps user values and coerces form strings', () => {
 test('a read request carries the unit id the device expects', () => {
   const frame = buildReadRequest(1008, 1, 255);
   assert.equal(frame[6], 255);
-  assert.equal(frame[7], 0x03);
+  assert.equal(frame[7], 0x04);
   assert.equal(frame[8] * 256 + frame[9], 1008);
 });
 
 test('a read answer is parsed as signed big-endian registers', () => {
-  const answer = new Uint8Array([0, 1, 0, 0, 0, 5, 255, 0x03, 2, 0xff, 0x38]);
+  const answer = new Uint8Array([0, 1, 0, 0, 0, 5, 255, 0x04, 2, 0xff, 0x38]);
   assert.deepEqual(parseReadAnswer(answer, 1008, 1), [0xff38 - 0x10000]);
 });
 
 test('an exception answer carries the register that was asked for', () => {
-  const exception = new Uint8Array([0, 1, 0, 0, 0, 3, 255, 0x83, 2]);
+  const exception = new Uint8Array([0, 1, 0, 0, 0, 3, 255, 0x84, 2]);
   assert.throws(() => parseReadAnswer(exception, 1008, 1), /exception 2 for 1008/);
 });
 

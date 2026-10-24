@@ -10,12 +10,12 @@
 // without a wallbox and in milliseconds.
 //
 // FUNCTION CODES
-//  0x03  read holding registers      the whole readable map
+//  0x04  read input registers        read-only measurements and states
 //  0x06  write single register       5004 (charging current), 6000 (alive)
-//  0x10  write multiple registers    nothing here yet, but the frame builder is
-//                                    the same shape, so it is included
-// The EVC04 specification lists the readable map as "R" and the writable
-// registers as "R/W"; everything this integration writes is a single register.
+// The EVC04 specification marks measurements as read-only ("R"). These are
+// Input Registers and must be read with function 0x04. Writable registers are
+// written with 0x06. This distinction matters: some firmware does not expose
+// read-only measurements through function 0x03 (Read Holding Registers).
 //
 // WHY THE ANSWER IS CHECKED SO HARD
 // A Modbus master that trusts its answer writes nonsense into the user's
@@ -35,8 +35,8 @@
 
 import { ModbusSocket, DEFAULT_UNIT_ID } from './transport.js';
 
-/** 0x03 — read holding registers. */
-export const FUNC_READ = 0x03;
+/** 0x04 — read input registers (read-only measurements and states). */
+export const FUNC_READ = 0x04;
 /** 0x06 — write a single register. */
 export const FUNC_WRITE_ONE = 0x06;
 
@@ -46,7 +46,7 @@ export const NOT_AVAILABLE = -32768;
 export class ModbusError extends Error {}
 
 /**
- * Build a 12-byte Modbus TCP read request (function code 0x03).
+ * Build a 12-byte Modbus TCP read request (function code 0x04).
  *
  * The address goes on the wire exactly as it is given: this file applies no
  * offset. Whether the addresses in the manufacturer's table are the ones to
@@ -87,7 +87,7 @@ export function buildWriteRequest(address, value, unitId = DEFAULT_UNIT_ID) {
 }
 
 /**
- * Read the register values out of a Modbus TCP answer to a 0x03 request.
+ * Read the register values out of a Modbus TCP answer to a 0x04 request.
  *
  * Registers are big-endian and signed, so a value above 32767 arrives as a
  * negative number in a 16-bit view. Callers that need the unsigned reading use
