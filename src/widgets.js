@@ -1,57 +1,57 @@
 // -----------------------------------------------------------------------------
 // The dashboard widget "Wallbox".
 //
+// PORTED FROM THE WATTWAECHTER WIDGET, WHICH RUNS ON A REAL DASHBOARD
+// The component grammar below is not invented: `{ ttl_seconds, components }` with
+// `value`, `status` and `button` entries is exactly what the WattWächter card
+// sends, and what its user sees rendered.
+//
 // WHAT A WIDGET IS HERE
 // A small card on the dashboard. This file builds its CONTENT; the Gladys core
 // renders it. No HTML, no CSS, no script: the content is a declarative tree of
-// components in a small vocabulary, and the core normalises and translates it.
+// components in a small vocabulary, and the core normalises, bounds and translates
+// it. That is why the card looks right in dark mode, on a phone and on a wall
+// tablet without us doing anything.
 //
-// THE ONE SENTENCE, WHICH IS THE WHOLE POINT
-// The card does not show "Ladezustand: 2". It says what is happening: "Ich lade
-// aktuell mit 11 kW." That sentence is the first thing on the card.
+// THE HANDLERS ARE NOT HERE
+// This file only builds content and works out what a tap means. Gladys asks for the
+// content through `onWidgetGet` and reports taps through `onWidgetAction`, and BOTH
+// have to be registered in index.js under the manifest's widget key. With no
+// `onWidgetAction`, a tap on a button is answered by the SDK's default reply to an
+// unhandled message and the button does nothing.
 //
-// WHY THE CARD STILL SHOWS A CONTROL
-// The wallbox has no start and no stop — a charge begins when the vehicle accepts
-// the current. The ONE thing that can be steered from here is how much current the
-// vehicle may draw, and that is what these two buttons do.
-//
-// WHY THERE IS NO RELEASE BUTTON
-// An earlier version had one, and it was wrong twice over: the device has no such
-// state, and a button that only writes a different number is not a release. Whoever
-// wants another current taps + or −.
-//
-// WHY THERE IS NO `settings` PARAMETER
-// There is one wallbox, and the card shows it. A per-instance setting would only
-// choose between several devices, and this integration publishes one. A parameter
-// nobody reads is how a lint rule gets silenced instead of obeyed.
-//
-// THE BUDGET — why the order below is a decision
+// THE BUDGET — why this file counts its components
 // A card takes at most 8 components, and among them at most 4 BUTTONS, 6 value
 // tiles, 2 texts and 1 status list. Anything past a cap is DROPPED, in content
-// order, silently. So the sentence comes first, then the values a user actually
-// looks at, then the two buttons.
+// order, silently. The sentence plus the current tile plus the two buttons come to
+// four of the eight; everything else that used to be on this card was moved to the
+// device properties, or removed.
 //
-// THE TILES ARE BOUND TO FEATURES, NOT TO NUMBERS
-// A tile with `device_feature` carries the external id of a published feature,
-// and Gladys reads that feature's own value and history. It therefore stays right
-// by itself and needs nothing from here.
+// WHAT THE CARD SHOWS
+//   - the state as ONE sentence, in a status row: "Ich lade aktuell mit 11 kW."
+//   - the charging current as a value tile, bound to the feature this integration
+//     publishes, so it follows the history without a refresh being wired here.
+//   - two buttons, + 1 A and − 1 A, which move the setpoint inside what the device
+//     and its cable allow.
+//
+// WHY THE TILE IS BOUND TO A FEATURE AND NOT TO A NUMBER
+// A tile with `device_feature` carries the external id of a published feature, and
+// Gladys reads that feature's own value and history. It therefore stays right by
+// itself. The WattWächter card makes the same distinction and says so in the same
+// words: a tile bound to a feature needs nothing from here.
 //
 // THE BUTTON TARGET COMES FROM THE SNAPSHOT, NOT FROM THE PUBLISHED FEATURE
-// `ids.charging_current` is "Ladestrom" — the feature the user sets, which has no
-// reading behind it until a setpoint is actually published. Gating the buttons on
-// it meant they were absent exactly when they were needed: on a card where nobody
-// had set a current yet, there was nothing to tap to set the first one. The buttons
-// therefore follow `state.charging_current`, the reading of register 1500, which is
-// there from the first poll on. The tile above them keeps its own, correct
-// condition.
+// Gating the buttons on the published feature meant they were absent exactly when
+// they were needed: on a card where nobody had set a current yet, there was nothing
+// to tap to set the first one. They therefore follow `state.charging_current`, the
+// reading of register 1500, which is there from the first poll on.
 //
 // WHAT UNIT THE CURRENT IS IN, AND WHY IT IS WRITTEN DOWN HERE
-// This device names two currents differently and reports them in different units:
-// the setpoint (5004) in AMPERES, the session report (1500) in TENTHS of one. The
-// earlier version divided by ten in one place and assumed amperes in another, so
-// every tap of a button was clamped to the 6 A floor — a card that looked healthy
-// and could only ever set 6 A. The figure is therefore normalised in ONE function,
-// `amps()` below, and every caller goes through it.
+// Register 1500 counts TENTHS of an ampere: 130 is 13 A. The figure is normalised
+// in ONE function, `amps()` below, and every caller goes through it. An earlier
+// version divided by ten in one place and assumed amperes in another, so every tap
+// was clamped to the 6 A floor — a card that looked healthy and could only ever set
+// 6 A.
 // -----------------------------------------------------------------------------
 
 /** Widget key, as declared in the manifest `widgets` field. */
@@ -82,9 +82,8 @@ export const MIN_CURRENT = 6;
 /**
  * Is a setpoint set?
  *
- * `null` means "no value", and so does `false` — the two arrive from different
- * callers and mean the same thing. Anything else, including 0, is a value that was
- * set and has to be shown as such.
+ * `null` means "no value", and so does `false`. Anything else, including 0, is a
+ * value that was set and has to be shown as such.
  */
 export function hasControl(controlled) {
   return controlled !== null && controlled !== undefined && controlled !== false;
@@ -94,8 +93,7 @@ export function hasControl(controlled) {
  * The label of the current tile, which names the number rather than the concept.
  *
  * "Ladestrom 16 A" answers the question a bar without a number leaves open: is
- * this the value I set, or something the device chose? With no value under our
- * control the label stays plain, because then there is no number to name.
+ * this the value I set, or something the device chose?
  */
 export function currentLabel(t, current) {
   if (!hasControl(current)) return t('current');
@@ -106,16 +104,27 @@ export function currentLabel(t, current) {
  * The snapshot key the current buttons move, and the one the tile shows.
  *
  * One name in one place: the poll plan, the device builder and the buttons all
- * speak about the same reading, and a second spelling of it is a second place to be
- * wrong.
+ * speak about the same reading, and a second spelling of it is a second place to
+ * be wrong.
  */
 export const CURRENT_READING = 'charging_current';
 
+/**
+ * @param {object} ctx
+ * @param {object|null} ctx.state the last reading snapshot
+ * @param {object|null} ctx.device { name, serial, model, host }
+ * @param {object} ctx.ids { charging_current } external id of the published feature
+ * @param {number|false|null} ctx.controlled the charging current we have set
+ * @param {object} ctx.settings the widget instance settings
+ * @param {Function} ctx.t labels, per language
+ * @param {Function} ctx.sentence the state as one sentence
+ */
 export function buildChargerContent({
   state,
   device,
   ids = {},
   controlled = null,
+  settings = {},
   t = (key) => key,
   sentence = () => '',
 }) {
@@ -141,54 +150,8 @@ export function buildChargerContent({
     ],
   });
 
-  // 2. The live power, as a tile bound to its own feature. It follows the
+  // 2. The charging current, as a tile bound to its own feature: it follows the
   //    published states, so nothing has to be refreshed here.
-  if (ids.power) {
-    components.push({
-      type: 'value',
-      label: t('power'),
-      icon: 'zap',
-      device_feature: ids.power,
-      unit: 'kW',
-      color: state.charging_state === 1 ? 'success' : 'neutral',
-    });
-  }
-
-  // 3. What this session has charged, so the card answers the question the user
-  //    actually has: how much went into the car.
-  if (ids.session_energy) {
-    components.push({
-      type: 'value',
-      label: t('energy'),
-      icon: 'battery',
-      device_feature: ids.session_energy,
-      unit: 'kWh',
-      color: 'neutral',
-    });
-  }
-
-  // 4. The meter reading, which is the lifetime figure.
-  if (ids.meter_reading) {
-    components.push({
-      type: 'value',
-      label: t('meter'),
-      icon: 'activity',
-      device_feature: ids.meter_reading,
-      unit: 'kWh',
-      color: 'neutral',
-    });
-  }
-
-  // 5. WHICH CURRENT IS SET, and the user has to be able to tell.
-  //
-  //    Two states that look alike and are not:
-  //      - a value we set: the heartbeat is running and the wallbox charges with
-  //        exactly this current;
-  //      - no value from us: the wallbox uses its own setting, which this
-  //        integration does not read back and therefore does not guess at.
-  //
-  //    A register READING is not the same as a value WE SET: the tile is bound to
-  //    the feature our own writes publish, and its label names the number.
   if (ids.charging_current) {
     components.push({
       type: 'value',
@@ -200,7 +163,7 @@ export function buildChargerContent({
     });
   }
 
-  // 6. The control: two buttons that move the charging current one ampere at a
+  // 3. The control: two buttons that move the charging current one ampere at a
   //    time, inside what the device and its cable allow. There is nothing else to
   //    steer on this device.
   //
@@ -228,10 +191,14 @@ export function buildChargerContent({
 
 /** The colour of the state row: a fault is not a neutral event. */
 function stateColor(state) {
-  if (state.fault_code) return 'danger';
-  if (state.chargepoint_state === 8) return 'danger';
+  const code = typeof state.chargepoint_state === 'object' && state.chargepoint_state !== null
+    ? state.chargepoint_state.value
+    : state.chargepoint_state;
+  const fault = state.fault_code && typeof state.fault_code === 'object' ? state.fault_code.value : state.fault_code;
+  if (fault) return 'danger';
+  if (code === 8) return 'danger';
   if (state.charging_state === 1) return 'success';
-  if (state.chargepoint_state === 7) return 'warning';
+  if (code === 7) return 'warning';
   return 'neutral';
 }
 
@@ -239,16 +206,11 @@ function stateColor(state) {
  * Work out what a tapped button means, without doing it.
  *
  * The widget returns an intention; the caller applies it, because the caller owns
- * the connection and the heartbeat. Keeping the two apart is what stops a card
- * from being able to write to a device on its own.
+ * the connection and the heartbeat. Keeping the two apart is what stops a card from
+ * being able to write to a device on its own.
  *
  * `step` moves the current from the value the user sees, not from a value
  * remembered somewhere else: two taps in a row then give two different currents.
- *
- * WHAT IT RETURNS, AND WHY THE KEY COMES WITH IT
- * The number AND the snapshot key it belongs under, so the caller cannot fold a
- * new setpoint into the wrong reading. An earlier version returned `{ current }`
- * and left the destination to the caller.
  *
  * THE CEILING IS OPTIONAL, AND THAT IS DELIBERATE
  * When the caller passes the limits it read from the device, a tap can never leave
@@ -287,19 +249,16 @@ export function chargerAction({
  * A snapshot entry (`{ value, word }`) or a bare number; amperes (16) or tenths of
  * an ampere (160). Two callers reach this with two different conventions — the poll
  * plan stores the raw register count, a hand-written reading states amperes — and
- * both are legitimate, so the figure is normalised in one place rather than assumed
- * at each call site.
+ * both are legitimate, so the figure is normalised in one place.
  *
  * THE THRESHOLD IS WHAT KEEPS THE TWO UNITS APART
- * Register 1500 counts tenths of an ampere, so 130 means 13 A and 65 means 6.5 A;
- * a setpoint is never above 32 A, and a tenths reading never below 60 for a real
- * session. Above 100 the figure is therefore a count of tenths, and at or below 100
- * it is already amperes. That is a rule of this device's ranges, not a guess.
+ * Register 1500 counts tenths of an ampere, so 130 means 13 A; a setpoint is never
+ * above 32 A, and a tenths reading never below 60 for a real session. Above 100 the
+ * figure is therefore a count of tenths, and at or below 100 it is already amperes.
  *
  * AND A MISSING VALUE IS NOT ZERO
  * `Number(null)` is 0, and a base of 0 would clamp every tap to the 6 A floor while
- * looking perfectly healthy. A missing reading returns the floor, which is the only
- * figure a card may start from when it has nothing better.
+ * looking perfectly healthy.
  */
 export function amps(value) {
   const bare = typeof value === 'object' && value !== null ? value.value : value;

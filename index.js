@@ -1,314 +1,441 @@
+// -----------------------------------------------------------------------------
+// Entry point (the "wiring"): it connects the pieces and holds no logic.
+//
+// PORTED FROM THE WATTWAECHTER INTEGRATION, WHICH RUNS
+// This file follows the shape of `gladys-wattwaechter/index.js`, because that one
+// is a working integration against the same SDK generation and the same Gladys.
+// Three mechanisms are taken over whole, and each cost that project a real failure
+// before it was fixed:
+//
+//   THE CONNECT GATE (`connecting`)
+//   `connected` and `onConfigUpdated` both connect, and on a restart they fire
+//   within seconds of each other. Two competing connect attempts leave two
+//   sockets open — on a device that allows ONE Modbus master, the second attempt
+//   is the one that fails.
+//
+//   AN IDEMPOTENT CONNECT (`establish()`)
+//   The connection test reads the configuration, that round trip makes Gladys
+//   deliver `onConfigUpdated`, and a naive connect path then tears down a working
+//   socket to build an equivalent one. Here that is avoided on purpose: a live
+//   socket to the same host and port is KEPT, and only the readings are refreshed.
+//
+//   ONE RETRY ON A FRESH SOCKET (`withConnection()`)
+//   A recreated container can meet a slot the device still holds open from the
+//   previous run. One deliberate retry rides that out; more would hammer the
+//   device.
+//
+// A HANDLER FOR EVERY MESSAGE, OR GLADYS SAYS "not implemented"
+// A widget is not drawn by the integration: Gladys asks for its content and
+// renders the answer. With no `onWidgetGet` registered for the widget key, Gladys
+// receives the SDK's default answer to an unhandled message — the literal words
+// "not implemented" on the card — while every value beside it is right. Both
+// widget handlers are therefore registered here, under the key the manifest
+// declares.
+//
+// THE ONE ORDERING RULE
+// Every handler is registered BEFORE `gladys.connect()`, and the configuration is
+// read in the `connected` handler — `getConfig()` talks to the host API, so it
+// needs an authenticated WebSocket and cannot run earlier.
+//
+// SDK: @gladysassistant/integration-sdk ^0.15 (Gladys >= 5.1.0).
+// -----------------------------------------------------------------------------
+
 import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
+
 import { DEFAULT_CONFIG, normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
 import { AliveControl } from './src/alive.js';
-import { buildDevice, publishAll, PLATFORM_TYPE } from './src/devices/wallbox.js';
-// `chargerAction` is deliberately not imported here. The SDK delivers a setpoint
-// through `onSetValue`, so the setpoint is clamped in the handler from the device's
-// own limits — the widget-returning mechanism is not part of that surface. The
-// function and its tests stay in src/widgets.js, because removing them is a decision
-// about the tests, not a side effect of an import.
-import { buildChargerContent, CHARGER_WIDGET, CURRENT_READING } from './src/widgets.js';
-// `TRIGGER` is deliberately not imported here: the event keys come out of
-// `chargingEvents()` as `event.key`, so nothing in this file needs the trigger names
-// themselves. Importing them only produced an unused variable.
+import { buildDevice, deviceExternalId, platformId, publishAll, PLATFORM_TYPE } from './src/devices/wallbox.js';
+import { CHARGER_WIDGET, buildChargerContent, chargerAction, ACTION, CURRENT_READING } from './src/widgets.js';
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { t, deviceSentence } from './src/labels.js';
 import { CONTROL } from './src/vestel/registers.js';
 
-/**
- * LOGGING: `logger`, NOT `gladys.log`
- *
- * The SDK exports a leveled logger as its own export (`logger`, or a named one from
- * `createLogger({ name })`); `debug`/`info` go to stdout and `warn`/`error` to
- * stderr, and the Gladys supervisor captures both.
- *
- * `gladys.log(...)` DOES NOT EXIST. An earlier version of this file called it four
- * times, including in the `catch` of main() — so the container died while trying to
- * report a failure, and the failure itself was never printed. That is the reason the
- * installation failed "without an error message": the message was what crashed.
- */
-const log = logger;
-
 const gladys = new GladysIntegration();
 
-/**
- * The configuration in force, replaced on every change.
- *
- * IT STARTS AS THE DEFAULTS, AND THE REAL VALUES ARRIVE ONCE THE SDK IS CONNECTED
- * This is the shape the official template uses, and the reason is not stylistic:
- * `getConfig()` talks to the host API, so it needs the WebSocket to be authenticated.
- * An earlier version of this file called it BEFORE `connect()`, the call failed, and
- * `applyConfig()` therefore never ran — leaving the client on the `host: ''` of the
- * defaults. The container then dialled `:502:` while the user's address sat correctly
- * filled in on the Configuration screen.
- */
-let config = normalizeConfig(DEFAULT_CONFIG);
+// --- State of the running integration ----------------------------------------
+let config = normalizeConfig(DEFAULT_CONFIG); // the user settings, re-read on every change
+let client = null; // the Modbus connection, null while we have none
+let state = null; // last readings
+let device = null; // { host, serial, model, name }: the identity of the wallbox
+let lastRead = 0; // when the readings were taken, to honour poll_frequency
+let previousCharging = null; // the last charging flank, see chargingEvents()
+let connecting = null; // the connect attempt running right now, or null
 
-/** The one connection of this process. Built once, never replaced. */
-const client = new Evc04Client({
-  host: config.host,
-  port: config.modbus_port,
-  unitId: config.unit_id,
-});
-
-/** The heartbeat. Its `write` goes through the same connection as everything else. */
+/** The heartbeat. Its `write` runs on whatever connection is current. */
 const control = new AliveControl({
-  write: (register, value) => client.writeRegister(register, value),
-  log: (message) => log.warn(message),
+  write: (register, value) => {
+    if (!client) throw new Error('Keine Verbindung zur Wallbox');
+    return client.writeRegister(register, value);
+  },
+  log: (message) => logger.warn(message),
 });
 
-/**
- * The last reading, the last charging flank, and the identity of the device.
- *
- * `previousCharging` is `null` on purpose: after a restart the integration does not
- * know whether a car was already charging, and firing "started" for a session that
- * began before the restart would be a lie about when it began.
- */
-let snapshot = null;
-let previousCharging = null;
-let deviceInfo = { serial: null, model: null };
+const NO_HOST = {
+  de: 'Bitte die Adresse der Wallbox in der Konfiguration eintragen.',
+  en: 'Enter the wallbox address in the configuration.',
+  fr: "Indiquez l'adresse de la borne dans la configuration.",
+  es: 'Introduce la direcci\u00f3n del cargador en la configuraci\u00f3n.',
+};
 
-/** The device external id as the SDK builds it, never by hand. */
-function deviceIds() {
-  return gladys.externalIds(PLATFORM_TYPE, deviceInfo.serial || deviceInfo.host || config.host);
-}
-
-/**
- * Point the connection at the configured address.
- *
- * A host change cannot be applied to a live socket, so the old one is closed first —
- * and the close is awaited. With a single allowed master, a socket left behind can
- * keep the wallbox from answering the next start.
- */
-async function applyConfig(next) {
-  config = next;
-  client.host = config.host;
-  client.port = config.modbus_port;
-  client.unitId = config.unit_id;
+/** Read the configuration Gladys holds into `config`. */
+async function readConfig() {
+  config = normalizeConfig(await gladys.getConfig());
   control.configure({
     failsafeCurrent: config.failsafe_current,
     failsafeTimeout: config.failsafe_timeout,
   });
-  await client.transport.close();
-  snapshot = null;
-  previousCharging = null;
+  return config;
 }
 
 /**
- * Read the device once and bring everything up to date.
+ * Connect to the wallbox, once at a time.
  *
- * THE ORDER MATTERS: the events are worked out from the reading BEFORE the reading is
- * published, so a scene that reacts to "charging started" reads the figures of the
- * session that just started rather than the one before it.
+ * `finally` clears the gate rather than a plain assignment after the await: if the
+ * attempt throws, a gate left set would make every later caller wait on a promise
+ * that has already settled, and the integration would never connect again.
  */
-async function poll() {
-  const reading = await client.readAll();
-  snapshot = reading;
+async function connectDevice() {
+  if (connecting) return connecting;
 
-  const { events, side } = chargingEvents({ snapshot: reading, previous: previousCharging });
-  previousCharging = side;
-  for (const event of events) {
-    await gladys.publishSceneEvent(event.key, event.data);
+  connecting = establish();
+  try {
+    return await connecting;
+  } finally {
+    connecting = null;
+  }
+}
+
+/**
+ * Do the actual connect: keep a good connection, otherwise build one.
+ *
+ * KEEPING A CONNECTION THAT IS STILL GOOD
+ * The conditions are deliberately narrow: there must be a live socket, and it must
+ * point at the configured host and port. A connection whose peer has gone, or one
+ * a failed read has already dropped, is NOT kept — those are the cases where a
+ * fresh build is genuinely needed, and skipping them would leave the integration
+ * talking to a dead handle.
+ *
+ * CLOSING BEFORE OPENING, AND WAITING FOR IT
+ * The EVC04 allows exactly ONE Modbus master. Giving the old socket back with
+ * `destroy()` returns at once and the device only frees the slot when the FIN
+ * arrives, so a new connect landing in that gap is refused. `close()` waits for
+ * the socket to report down.
+ */
+async function establish() {
+  const sameTarget = Boolean(
+    client && device && device.host === config.host && client.port === config.modbus_port,
+  );
+  if (client?.transport?.isOpen && sameTarget) {
+    state = await client.readAll().catch((err) => {
+      logger.warn(`Refresh on the existing connection failed: ${err.message}`);
+      return state;
+    });
+    lastRead = Date.now();
+    await gladys.setConnectionStatus(true);
+    return true;
   }
 
-  await publishAll(gladys, { ...deviceInfo }, reading);
-  return reading;
+  if (client) {
+    await client.transport?.close?.().catch(() => {});
+    client = null;
+  }
+  state = null;
+  device = null;
+  previousCharging = null;
+  control.clear();
+
+  if (!config.host) {
+    await gladys.setConnectionStatus(false, NO_HOST);
+    return false;
+  }
+
+  try {
+    const connection = new Evc04Client({
+      host: config.host,
+      port: config.modbus_port,
+      unitId: config.unit_id,
+    });
+    // Tolerated problems are logged, never thrown.
+    connection.warn = (what, err) => logger.warn(`Tolerated (${what}): ${err.message}`);
+    const info = await connection.connect();
+
+    device = {
+      host: config.host,
+      serial: info.serial,
+      model: info.model,
+      name: 'Wallbox',
+    };
+    client = connection;
+
+    const limits = await client.readLimits().catch(() => null);
+    device.limits = limits;
+    state = await client.readAll();
+    lastRead = Date.now();
+    logger.info(
+      `Wallbox ready: ${device.serial || 'no serial'}, firmware ${info.firmware || 'unknown'}, ` +
+        `${Object.keys(state).length} readings, charging current range ` +
+        `${limits ? `${limits.min}-${limits.max}` : 'not reported'} A, ` +
+        `charging ${state.charging_current ?? '?'} (register 1500)`,
+    );
+    await gladys.setConnectionStatus(true);
+    return true;
+  } catch (err) {
+    // A failed attempt must not leave a half-open socket behind: this device
+    // allows one master, and a stranded socket would block the next attempt.
+    client?.transport?.reset();
+    client = null;
+    logger.error(`Wallbox connection failed (${config.host}): ${err.message}`);
+    await gladys
+      .setConnectionStatus(false, {
+        de: `Wallbox nicht erreichbar: ${err.message}`.slice(0, 200),
+        en: `Wallbox not reachable: ${err.message}`.slice(0, 200),
+        fr: `Borne injoignable : ${err.message}`.slice(0, 200),
+        es: `Cargador no accesible: ${err.message}`.slice(0, 200),
+      })
+      .catch(() => {});
+    return false;
+  }
 }
 
 /**
- * Read the wallbox and offer it to Gladys.
+ * Run `task` on the one connection this process owns, and return its answer.
  *
- * THE DISCOVERY IS PUBLISHED, NOT RETURNED
+ * WHY THE RETRY EXISTS
+ * When the container is recreated, the device-side socket can survive until its
+ * own timeout, and the first attempt then meets a slot that is still occupied. One
+ * deliberate retry on a fresh connection rides that out.
+ *
+ * WHY THE ORIGINAL ERROR IS CARRIED ALONG
+ * When the retry fails as well, the error thrown here would otherwise say only
+ * "no connection" — the symptom, not the cause. The first error is attached as
+ * `cause`, so a reader of the log sees what was tried and why it broke.
+ */
+async function withConnection(task) {
+  if (!client) {
+    if (!(await connectDevice())) throw new Error('Keine Verbindung zur Wallbox');
+  }
+  try {
+    return await task(client);
+  } catch (err) {
+    logger.warn(`Read failed (${err.message}) -> one retry on a fresh connection`);
+    client?.transport?.reset();
+    client = null;
+    if (!(await connectDevice())) {
+      throw new Error('Keine Verbindung zur Wallbox nach einem zweiten Versuch', { cause: err });
+    }
+    return await task(client);
+  }
+}
+
+/**
+ * Publish the device, so it appears in the Discovery tab where the user creates
+ * it. Publishing is an offer, not a creation: Gladys keeps the user in control.
+ *
  * `onScanRequest` has the signature `() => void | Promise<void>`: the callback
- * answers by calling `publishDiscoveredDevices(devices)`, and anything it RETURNS is
- * read by nobody. An earlier version collected the device and returned it as the
- * value of the callback — the call was accepted, the return value dropped, and the
- * Discovery screen stayed empty no matter how well the wallbox answered.
- *
- * The published list REPLACES the previous one, so this sends exactly one device:
- * this integration controls one charge point, and a stale second entry would be an
- * offer the user cannot act on.
+ * answers by CALLING this, and anything it returns is read by nobody. An earlier
+ * version returned the device as the callback's value — the call was accepted, the
+ * value dropped, and the Discovery screen stayed empty.
  */
-async function publishDiscovery() {
-  const info = await client.connect();
-  deviceInfo = {
-    serial: info.serial || null,
-    model: info.model || null,
-    name: 'Wallbox',
-    host: config.host,
-  };
-  const limits = await client.readLimits().catch(() => null);
-  const snapshotNow = await client.readAll();
-  await gladys.publishDiscoveredDevices([
-    buildDevice(gladys, deviceInfo, snapshotNow, config.poll_frequency, limits),
-  ]);
+async function publishDevice() {
+  if (!device || !state) return;
+  const payload = buildDevice(gladys, device, state, config.poll_frequency, device.limits);
+  logger.info(`publishDiscoveredDevices -> "${payload.name}" with ${payload.features.length} features`);
+  for (const feature of payload.features) {
+    logger.info(`  feature: ${feature.name} | ${feature.category}/${feature.type} | ${feature.unit}`);
+  }
+  await gladys.publishDiscoveredDevices([payload]);
+  await publishAll(gladys, device, state);
 }
 
+/**
+ * Read the wallbox again, publish the value, and fire the charging flanks.
+ *
+ * THE ORDER MATTERS: the events are worked out from the reading BEFORE the reading
+ * is published, so a scene that reacts to "charging started" reads the figures of
+ * the session that just started rather than the one before it.
+ */
+async function refresh() {
+  if (!client) return;
+  state = await client.readAll();
+  lastRead = Date.now();
+
+  const { events, side } = chargingEvents({ snapshot: state, previous: previousCharging });
+  previousCharging = side;
+  for (const event of events) {
+    await gladys
+      .publishSceneEvent(event.key, event.data)
+      .catch((err) => logger.error('publishSceneEvent failed', err.message));
+  }
+
+  await publishAll(gladys, device, state);
+}
+
+/** The external id of one feature of this device, or null before the first read. */
+function featureId(key) {
+  if (!device) return null;
+  return gladys.externalIds(PLATFORM_TYPE, platformId(device)).feature(key);
+}
+
+// --- Discovery ---------------------------------------------------------------
 gladys.onScanRequest(async () => {
-  await publishDiscovery();
+  logger.info('onScanRequest -> called by Gladys');
+  if (!client && !(await connectDevice())) {
+    logger.warn('onScanRequest -> no wallbox, nothing published');
+    return;
+  }
+  await publishDevice();
 });
 
-/**
- * One poll, asked for by the Gladys scheduler.
- *
- * The callback receives the DEVICE and answers with nothing: what the user sees is
- * published through `publishStates`, not through a return value. Returning
- * `{ should_poll, poll_frequency }` was harmless — the value is ignored — but it read
- * as if the poll's answer were the return, which is exactly the confusion that made
- * the discovery above silent.
- */
-gladys.onPoll(async () => {
-  await poll();
+// --- Polling -----------------------------------------------------------------
+// Gladys ticks a polled device once a minute at most; the interval the user chose
+// is applied by skipping ticks, so `poll_frequency` is honoured instead of being
+// overwritten by the scheduler's pace.
+gladys.onPoll(async (polled) => {
+  if (!client || !device) return;
+  if (polled?.external_id !== deviceExternalId(gladys, device)) return;
+  if (Date.now() - lastRead < config.poll_frequency - 30000) return;
+  await refresh().catch((err) => logger.warn(`Poll failed: ${err.message}`));
+  gladys.requestWidgetRefresh(CHARGER_WIDGET);
 });
 
-/**
- * A setpoint from Gladys: the value of the one writable feature changed.
- *
- * `onSetValue` is the SDK's handler for a command, and it arrives with the device,
- * the feature and the value. The value is written to register 5004, the heartbeat is
- * told to keep it in force, and the device is read once so the card shows what the
- * wallbox reports rather than what was asked for.
- */
-gladys.onSetValue(async (device, deviceFeature, value) => {
+// --- Setpoint ----------------------------------------------------------------
+// A command from Gladys: the value of the one writable feature changed. The value
+// is written to register 5004, the heartbeat is told to keep it in force, and the
+// device is read once so the card shows what the wallbox reports.
+gladys.onSetValue(async (dev, feature, value) => {
   const wanted = Number(value);
   if (!Number.isFinite(wanted)) throw new Error('Der Ladestrom muss eine Zahl sein');
 
-  const limits = client.getLimits();
-  const current = Math.min(limits.max, Math.max(limits.min, Math.round(wanted)));
-
-  await client.writeRegister(CONTROL.charging_current, current);
-  control.set(current);
-  await poll();
+  await withConnection(async (connection) => {
+    const limits = connection.getLimits();
+    const current = Math.min(limits.max, Math.max(limits.min, Math.round(wanted)));
+    await connection.writeRegister(CONTROL.charging_current, current);
+    control.set(current);
+    logger.info(`Setpoint ${current} A written to ${control ? '5004' : '?'}`);
+  });
+  await refresh().catch(() => {});
+  gladys.requestWidgetRefresh(CHARGER_WIDGET);
 });
 
-/**
- * The connection test the configuration screen offers.
- *
- * It reads the device and says what came back, in words a user can act on. It uses
- * the ONE connection: opening a second one would be a second master, which this
- * device does not allow.
- */
-gladys.onAction('test_connection', async () => {
-  const info = await client.connect();
-  const state = await client.readChargepointState();
-  const limits = await client.readLimits();
-  return {
-    serial: info.serial || null,
-    model: info.model || null,
-    firmware: info.firmware || null,
-    state,
-    sentence: deviceSentence({ word: state }),
-    min_current: limits.min,
-    max_current: limits.max,
-  };
-});
-
-/**
- * The dashboard card.
- *
- * The content is built from the last snapshot, so a card opened between two polls
- * shows the reading that was really taken rather than a number invented here. The id
- * passed to the tile is the one feature this device publishes.
- */
-gladys.onWidgetGet(CHARGER_WIDGET, async () => {
-  const ids = deviceIds();
+// --- Widget ------------------------------------------------------------------
+// WITHOUT THESE TWO HANDLERS THE CARD SAYS "not implemented".
+gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
+  // Pick up a fresh reading, so the tile is not a minute stale when it is opened.
+  if (client && Date.now() - lastRead > 10000) await refresh().catch(() => {});
   return buildChargerContent({
-    state: snapshot,
-    device: deviceInfo,
-    ids: { charging_current: ids.feature(CURRENT_READING) },
+    state,
+    device,
+    ids: { charging_current: featureId(CURRENT_READING) },
     controlled: control.active ? control.current : null,
+    settings,
     t,
-    sentence: (state) =>
+    sentence: (snapshot) =>
       deviceSentence({
-        word: Evc04Client.stateWord(state, 'chargepoint_state'),
-        power: Evc04Client.reading(state, 'power'),
-        faultCode: Evc04Client.reading(state, 'fault_code'),
+        word: Evc04Client.stateWord(snapshot, 'chargepoint_state'),
+        power: Evc04Client.reading(snapshot, 'power'),
+        faultCode: Evc04Client.reading(snapshot, 'fault_code'),
       }),
   });
 });
 
+/**
+ * A tap on + or − on the card.
+ *
+ * The card worked out the intention; this applies it. That split is what keeps the
+ * widget from being able to write to a device on its own, and it is the shape the
+ * WattWächter uses for its period buttons. The intention is clamped against the
+ * limits the DEVICE reported, not against a constant.
+ */
+gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
+  const intent = chargerAction({
+    actionKey,
+    params,
+    state,
+    limits: client?.getLimits(),
+    t,
+  });
+  await withConnection(async (connection) => {
+    await connection.writeRegister(CONTROL.charging_current, intent.current);
+  });
+  control.set(intent.current);
+  await refresh().catch(() => {});
+  gladys.requestWidgetRefresh(CHARGER_WIDGET);
+  return intent.toast;
+});
+
 /** The one scene action: set the charging current, with the heartbeat kept alive. */
 gladys.onSceneAction('set_charging_current', async (fields) => {
-  return SCENE_ACTIONS.set_charging_current({ client, fields, control });
+  return SCENE_ACTIONS.set_charging_current({
+    client,
+    fields,
+    control,
+    connect: connectDevice,
+  });
 });
 
 /**
- * The connection status in the Configuration screen.
+ * Manifest action "Test the connection": the button in the Configuration screen.
  *
- * A wallbox that does not answer is not a broken integration: the container is up and
- * only the device is unreachable, which is exactly what a user needs told. The call is
- * best effort — losing the status line must not stop startup.
+ * It answers in words rather than only in the log. It reads over the connection
+ * this process already owns: a client of its own would be a second master, which
+ * this device does not allow.
  */
-async function reportConnection() {
+gladys.onAction('test_connection', async () => {
+  await readConfig().catch(() => {});
   try {
-    await client.readOptionalUint16(CONTROL.charging_current);
-    await gladys.setConnectionStatus(true);
+    const readings = await withConnection((connection) => connection.readAll());
+    const current = readings.charging_current;
+    return {
+      de: `Antwort: ${device?.model || 'Wallbox'}, Firmware ${device?.firmware || 'unbekannt'}. ${Object.keys(readings).length} Messwerte, Ladestrom ${current ?? '?'} (Zehntelampere).`,
+      en: `Answered: ${device?.model || 'Wallbox'}, firmware ${device?.firmware || 'unknown'}. ${Object.keys(readings).length} readings, charging current ${current ?? '?'} (tenths of an ampere).`,
+      fr: `R\u00e9ponse : ${device?.model || 'Wallbox'}, firmware ${device?.firmware || 'inconnu'}. ${Object.keys(readings).length} mesures, courant ${current ?? '?'} (dixi\u00e8mes d'amp\u00e8re).`,
+      es: `Respuesta: ${device?.model || 'Wallbox'}, firmware ${device?.firmware || 'desconocido'}. ${Object.keys(readings).length} medidas, corriente ${current ?? '?'} (d\u00e9cimas de amperio).`,
+    };
   } catch (err) {
-    await gladys.setConnectionStatus(false, {
-      de: `Keine Verbindung zur Wallbox: ${err.message}`,
-      en: `No connection to the wallbox: ${err.message}`,
-    });
+    logger.error(`Connection test failed (${config.host}): ${err.message}`);
+    return {
+      de: `Keine verwertbare Antwort von ${config.host}: ${err.message}. Ist Modbus TCP in der Wallbox eingeschaltet?`,
+      en: `No usable answer from ${config.host}: ${err.message}. Is Modbus TCP switched on in the wallbox?`,
+      fr: `Aucune r\u00e9ponse exploitable de ${config.host} : ${err.message}. Le Modbus TCP est-il activ\u00e9 dans la borne ?`,
+      es: `Sin respuesta utilizable de ${config.host}: ${err.message}. \u00bfEst\u00e1 activado el Modbus TCP en el cargador?`,
+    };
   }
-}
-
-/**
- * Shutdown.
- *
- * `handleShutdown` is the SDK's own path: it runs this cleanup, disconnects cleanly
- * and exits. The heartbeat is stopped first, so no write can be in flight, and the
- * socket is then closed AND WAITED FOR — `reset()` would return at once and leave the
- * wallbox counting a master for a moment, which is exactly what a restart cannot
- * afford.
- */
-gladys.handleShutdown(async () => {
-  control.clear();
-  control.stop();
-  await client.transport.close();
-  log.info('Verbindung zur Wallbox geschlossen.');
 });
 
-/**
- * Every (re)connection: fetch the configuration the user filled in, apply it, offer
- * the device, and report whether the wallbox answers.
- *
- * WHY THIS IS A CONNECTED HANDLER AND NOT A LINE IN A main()
- * `getConfig()` needs an authenticated connection, so it cannot run before
- * `connect()`. The official template does exactly this, and for the same reason. The
- * handler also runs again after every reconnection, which is what keeps the address
- * current if the container is restarted by the supervisor.
- */
+// --- Connection lifecycle ----------------------------------------------------
 gladys.on('connected', async () => {
   try {
-    config = normalizeConfig(await gladys.getConfig());
-    await applyConfig(config);
-    if (!config.host) {
-      log.warn('Keine Adresse in der Konfiguration eingetragen — nichts zu verbinden.');
-      return;
-    }
-    log.info(`Vestel EVC04 Integration bereit (${config.host}).`);
-    await publishDiscovery();
-    await poll();
-    await reportConnection();
+    await readConfig();
+    if (await connectDevice()) await publishDevice();
+    gladys.requestWidgetRefresh(CHARGER_WIDGET);
   } catch (err) {
-    log.error('Konfiguration konnte nicht angewendet werden', err);
+    logger.error('Post-connection initialization failed', err.message);
   }
 });
 
-/**
- * Configuration updated by the user in the Configuration screen.
- *
- * The whole configuration arrives, not a patch, so it replaces the one in force. A
- * changed address closes the old socket first — see applyConfig.
- */
-gladys.onConfigUpdated(async (next) => {
-  await applyConfig(normalizeConfig(next));
+gladys.onConfigUpdated(async (newConfig) => {
+  config = normalizeConfig(newConfig);
+  control.configure({
+    failsafeCurrent: config.failsafe_current,
+    failsafeTimeout: config.failsafe_timeout,
+  });
+  previousCharging = null;
+  if (await connectDevice()) await publishDevice();
+  gladys.requestWidgetRefresh(CHARGER_WIDGET);
 });
 
-/**
- * Startup: nothing but the connection. Every handler above is registered first, and
- * the connection is what triggers them.
- */
+// --- Shutdown ----------------------------------------------------------------
+gladys.handleShutdown(async (signal) => {
+  logger.info(`Received ${signal} -> graceful shutdown`);
+  control.clear();
+  control.stop();
+  await client?.transport?.close().catch(() => {});
+  client = null;
+});
+
+// --- Startup -----------------------------------------------------------------
+logger.info('Starting the Vestel EVC04 integration...');
 gladys.connect().catch((err) => {
-  log.error('Initiale Verbindung fehlgeschlagen', err);
+  logger.error('Initial connection failed', err.message);
 });
