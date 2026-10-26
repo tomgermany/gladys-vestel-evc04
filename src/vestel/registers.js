@@ -30,16 +30,17 @@
 // text on the first attempt with that reading — so `ADDRESS_BASE` stays as it is.
 //
 // WHAT MAY BE WRITTEN, AND WHAT MAY ONLY BE READ
-// Four holding registers are written, as required by the EVC04 Modbus specification:
+// Four holding registers can be written when Gladys explicitly takes control:
 //
 //   FAILSAFE.current (2000)           fallback current during communication loss
 //   FAILSAFE.timeout (2002)            timeout for fallback and heartbeat
 //   CONTROL.charging_current (5004)   dynamic current the vehicle may draw
 //   FAILSAFE.alive (6000)              heartbeat that keeps dynamic control active
 //
-// The first three are initialized in order on every new TCP connection; the alive
-// register is updated periodically. Measurement and installer-limit registers remain
-// read-only.
+// Connection, identification, discovery, polling and connection tests are read-only.
+// Only an explicit setpoint command initializes the first three in order and then
+// starts the periodic alive heartbeat. Measurement and installer-limit registers
+// remain read-only.
 //
 // NO SCALE FACTORS ON THIS MAP
 // The specification states every unit outright — mA, V, W, 0.1 kWh, Wh, A — so
@@ -230,8 +231,8 @@ export const SESSION = {
 /**
  * The failsafe registers. The manufacturer marks all three as READ/WRITE.
  *
- * On each new connection, the integration writes the configured fallback current
- * and timeout before setting the dynamic charging current. `alive` is the recurring
+ * Only an explicit setpoint command writes the configured fallback current and
+ * timeout before setting the dynamic charging current. `alive` is the recurring
  * heartbeat: the master writes 1,
  * the wallbox writes 0 back, and it checks the register every `timeout / 2`
  * seconds. An unanswered alive register means "the master is gone", and the wallbox
