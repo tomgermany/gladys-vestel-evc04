@@ -43,7 +43,7 @@ import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 
 import { DEFAULT_CONFIG, normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
-import { AliveControl } from './src/alive.js';
+import { AliveControl, DEFAULT_FAILSAFE_TIMEOUT_S } from './src/alive.js';
 import {
   buildDevice,
   deviceExternalId,
@@ -63,7 +63,7 @@ import {
 } from './src/widgets.js';
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { t, deviceSentence, cableSentence } from './src/labels.js';
-import { CONTROL } from './src/vestel/registers.js';
+import { CONTROL, FAILSAFE, DEFAULT_MIN_CURRENT } from './src/vestel/registers.js';
 
 const gladys = new GladysIntegration();
 
@@ -96,6 +96,9 @@ const NO_HOST = {
   fr: "Indiquez l'adresse de la borne dans la configuration.",
   es: 'Introduce la direcci\u00f3n del cargador en la configuraci\u00f3n.',
 };
+
+/** Small, deliberate pause between control writes; the wallbox is not rushed. */
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Read the configuration Gladys holds into `config`. */
 async function readConfig() {
@@ -157,6 +160,11 @@ async function establish() {
     return true;
   }
 
+  // Preserve the last requested current, but pause heartbeat writes while the
+  // old socket is being released and the new connection is initialized.
+  const requestedCurrent = control.active ? control.current : DEFAULT_MIN_CURRENT;
+  control.stop();
+
   if (client) {
     await client.transport?.close?.().catch(() => {});
     client = null;
@@ -188,6 +196,20 @@ async function establish() {
     connection.transport.trace = (message) => traceModbus(message);
     const info = await connection.connect();
 
+    // Vestel's protocol requires these three holding registers to be set on
+    // every new TCP master connection. Write them one at a time and pause briefly
+    // between acknowledged writes so the wallbox can process each change calmly.
+    const failsafeCurrent = control.failsafeCurrent();
+    const failsafeTimeout = Number.isInteger(config.failsafe_timeout) && config.failsafe_timeout > 0
+      ? config.failsafe_timeout
+      : DEFAULT_FAILSAFE_TIMEOUT_S;
+    await connection.writeRegister(FAILSAFE.current, failsafeCurrent);
+    await wait(250);
+    await connection.writeRegister(FAILSAFE.timeout, failsafeTimeout);
+    await wait(250);
+    await connection.writeRegister(CONTROL.charging_current, requestedCurrent);
+    await wait(500);
+
     device = {
       host: config.host,
       modbusPort: config.modbus_port,
@@ -197,6 +219,8 @@ async function establish() {
       name: 'Wallbox',
     };
     client = connection;
+    // Only start the heartbeat after failsafe and dynamic current are in place.
+    control.set(requestedCurrent);
 
     const limits = await client.readLimits().catch(() => null);
     device.limits = limits;
