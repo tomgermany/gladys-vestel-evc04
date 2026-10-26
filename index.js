@@ -63,7 +63,7 @@ import {
 } from './src/widgets.js';
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { t, deviceSentence, cableSentence } from './src/labels.js';
-import { CONTROL, FAILSAFE, DEFAULT_MIN_CURRENT } from './src/vestel/registers.js';
+import { CONTROL, FAILSAFE } from './src/vestel/registers.js';
 
 const gladys = new GladysIntegration();
 
@@ -99,6 +99,30 @@ const NO_HOST = {
 
 /** Small, deliberate pause between control writes; the wallbox is not rushed. */
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Take control only after an explicit setpoint request.
+ * Apply the documented sequence: failsafe current, failsafe timeout, dynamic
+ * current, then start the heartbeat. A normal connection or read never calls this.
+ */
+async function applySetpoint(connection, current) {
+  const failsafeCurrent = control.failsafeCurrent();
+  const failsafeTimeout =
+    Number.isInteger(config.failsafe_timeout) && config.failsafe_timeout > 0
+      ? config.failsafe_timeout
+      : DEFAULT_FAILSAFE_TIMEOUT_S;
+
+  await connection.writeRegister(FAILSAFE.current, failsafeCurrent);
+  await wait(250);
+  await connection.writeRegister(FAILSAFE.timeout, failsafeTimeout);
+  await wait(250);
+  await connection.writeRegister(CONTROL.charging_current, current);
+  await wait(500);
+  control.set(current);
+  logger.info(
+    `Control enabled by explicit request: failsafe=${failsafeCurrent} A, timeout=${failsafeTimeout} s, setpoint=${current} A`,
+  );
+}
 
 /** Read the configuration Gladys holds into `config`. */
 async function readConfig() {
@@ -160,10 +184,9 @@ async function establish() {
     return true;
   }
 
-  // Preserve the last requested current, but pause heartbeat writes while the
-  // old socket is being released and the new connection is initialized.
-  const requestedCurrent = control.active && sameTarget ? control.current : DEFAULT_MIN_CURRENT;
-  control.stop();
+  // A fresh connection starts read-only. Do not carry control over implicitly:
+  // any takeover must be an explicit user/scene/widget command.
+  control.clear();
 
   if (client) {
     await client.transport?.close?.().catch(() => {});
@@ -197,20 +220,9 @@ async function establish() {
     connection.transport.trace = (message) => traceModbus(message);
     const info = await connection.connect();
 
-    // Vestel's protocol requires these three holding registers to be set on
-    // every new TCP master connection. Write them one at a time and pause briefly
-    // between acknowledged writes so the wallbox can process each change calmly.
-    const failsafeCurrent = control.failsafeCurrent();
-    const failsafeTimeout =
-      Number.isInteger(config.failsafe_timeout) && config.failsafe_timeout > 0
-        ? config.failsafe_timeout
-        : DEFAULT_FAILSAFE_TIMEOUT_S;
-    await connection.writeRegister(FAILSAFE.current, failsafeCurrent);
-    await wait(250);
-    await connection.writeRegister(FAILSAFE.timeout, failsafeTimeout);
-    await wait(250);
-    await connection.writeRegister(CONTROL.charging_current, requestedCurrent);
-    await wait(500);
+    // Connecting, identifying and scanning are strictly read-only. The
+    // control registers are initialized only by applySetpoint(), after an explicit
+    // setpoint command from the user, widget or scene.
 
     device = {
       host: config.host,
@@ -221,8 +233,6 @@ async function establish() {
       name: 'Wallbox',
     };
     client = connection;
-    // Only start the heartbeat after failsafe and dynamic current are in place.
-    control.set(requestedCurrent);
 
     const limits = await client.readLimits().catch(() => null);
     device.limits = limits;
@@ -371,9 +381,7 @@ gladys.onSetValue(async (dev, feature, value) => {
   await withConnection(async (connection) => {
     const limits = connection.getLimits();
     const current = Math.min(limits.max, Math.max(limits.min, Math.round(wanted)));
-    await connection.writeRegister(CONTROL.charging_current, current);
-    control.set(current);
-    logger.info(`Setpoint ${current} A written to register 5004`);
+    await applySetpoint(connection, current);
   });
   await refresh().catch(() => {});
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
@@ -443,7 +451,7 @@ gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
   await withConnection(async (connection) => {
     logger.info(`Widget setpoint write starting: register ${CONTROL.charging_current}, value=${intent.current} A`);
     try {
-      await connection.writeRegister(CONTROL.charging_current, intent.current);
+      await applySetpoint(connection, intent.current);
       logger.info(`Widget setpoint write confirmed: register ${CONTROL.charging_current}, value=${intent.current} A`);
     } catch (err) {
       logger.error(
@@ -452,7 +460,6 @@ gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
       throw err;
     }
   });
-  control.set(intent.current);
   await refresh().catch((err) => {
     logger.warn(`Widget setpoint readback failed: ${err.message}`);
   });
@@ -471,6 +478,7 @@ gladys.onSceneAction('set_charging_current', async (fields) => {
     client,
     fields,
     control,
+    applySetpoint,
     connect: connectDevice,
   });
 });
