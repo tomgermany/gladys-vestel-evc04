@@ -346,7 +346,12 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
   return buildChargerContent({
     state,
     device,
-    ids: { total_current: featureId(TOTAL_CURRENT_READING) },
+    ids: {
+      total_current:
+        Number.isFinite(Evc04Client.reading(state, TOTAL_CURRENT_READING))
+          ? featureId(TOTAL_CURRENT_READING)
+          : null,
+    },
     controlled: control.active ? control.current : null,
     settings,
     t,
