@@ -389,6 +389,20 @@ test('a tap on − moves the current down and stops at the floor', () => {
   assert.equal(floor.current, 6);
 });
 
+test('session max current does not override the configured EVSE and cable ceiling', async () => {
+  const client = new Evc04Client({ host: 'wallbox.test', transport: { request: async () => {} } });
+  const values = new Map([
+    [1102, 6],
+    [1104, 16],
+    [1106, 32],
+    [1100, 6],
+  ]);
+  client.readOptionalUint16 = async (address) => values.get(address) ?? null;
+
+  const limits = await client.readLimits();
+  assert.deepEqual(limits, { min: 6, max: 16, reportedMin: 6 });
+});
+
 test('a tap can never leave the range the device reported', () => {
   const intent = chargerAction({
     actionKey: ACTION.CURRENT_UP,
