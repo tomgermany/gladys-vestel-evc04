@@ -365,6 +365,7 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
           : null,
     },
     controlled: control.active ? control.current : null,
+    limits: client?.getLimits?.() ?? null,
     settings,
     t,
     cableSentence: (snapshot) => cableSentence(snapshot?.cable_state),

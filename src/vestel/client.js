@@ -228,7 +228,13 @@ export class Evc04Client extends VestelModbus {
       cableMax ?? DEFAULT_MAX_CURRENT,
       DEFAULT_MAX_CURRENT,
     );
-    this.limits = { min: floor, max: Math.max(floor, ceiling), reportedMin: min };
+    this.limits = {
+      min: floor,
+      max: Math.max(floor, ceiling),
+      reportedMin: min,
+      evseMax,
+      cableMax,
+    };
 
     // Temporary, read-only diagnosis: show exactly which register narrows the
     // allowed setpoint range. This is essential when the installer configured

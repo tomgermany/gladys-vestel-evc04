@@ -309,6 +309,29 @@ test('the kilowatt-hour conversion uses the step of the source register', () => 
 });
 
 
+test('the widget shows a compact cable limit only when the cable maximum is lower', () => {
+  const limited = buildChargerContent({
+    state: snapshot,
+    device: { name: 'Wallbox' },
+    limits: { evseMax: 32, cableMax: 16, max: 16 },
+    ids: {},
+    t,
+    sentence: () => 'Verfügbar – kein Fahrzeug angeschlossen.',
+  });
+  const item = limited.components[0].items.find((entry) => entry.label === t('current_limit'));
+  assert.equal(item?.value, 'Kabel 16 A (Wallbox 32 A)');
+
+  const unrestricted = buildChargerContent({
+    state: snapshot,
+    device: { name: 'Wallbox' },
+    limits: { evseMax: 16, cableMax: 32, max: 16 },
+    ids: {},
+    t,
+    sentence: () => 'Verfügbar – kein Fahrzeug angeschlossen.',
+  });
+  assert.equal(unrestricted.components[0].items.some((entry) => entry.label === t('current_limit')), false);
+});
+
 test('the widget shows total current as a tile and cable state as readable status text', () => {
   const content = buildChargerContent({
     state: snapshot,

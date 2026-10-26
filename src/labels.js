@@ -68,6 +68,8 @@ export const TEXT = {
     power: 'Ladeleistung',
     current: 'Ladestrom',
     current_total: 'Ladestrom gesamt',
+    current_limit: 'Strombegrenzung',
+    cable_limit: (cable, wallbox) => `Kabel ${cable} A (Wallbox ${wallbox} A)`,
     cable: 'Kabelzustand',
     energy: 'Geladene Energie',
     meter: 'Zählerstand',
@@ -93,6 +95,8 @@ export const TEXT = {
     power: 'Charging power',
     current: 'Charging current',
     current_total: 'Total charging current',
+    current_limit: 'Current limit',
+    cable_limit: (cable, wallbox) => `Cable ${cable} A (wallbox ${wallbox} A)`
     cable: 'Cable state',
     energy: 'Energy charged',
     meter: 'Meter reading',
@@ -118,6 +122,8 @@ export const TEXT = {
     power: 'Puissance de charge',
     current: 'Courant de charge',
     current_total: 'Courant de charge total',
+    current_limit: 'Limite de courant',
+    cable_limit: (cable, wallbox) => `Câble ${cable} A (borne ${wallbox} A)`
     cable: 'État du câble',
     energy: 'Énergie chargée',
     meter: 'Index',
@@ -143,6 +149,8 @@ export const TEXT = {
     power: 'Potencia de carga',
     current: 'Corriente de carga',
     current_total: 'Corriente de carga total',
+    current_limit: 'Límite de corriente',
+    cable_limit: (cable, wallbox) => `Cable ${cable} A (cargador ${wallbox} A)`
     cable: 'Estado del cable',
     energy: 'Energía cargada',
     meter: 'Lectura del contador',

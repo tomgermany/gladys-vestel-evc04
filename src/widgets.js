@@ -156,6 +156,7 @@ export function buildChargerContent({
   t = (key) => key,
   sentence = () => '',
   cableSentence = () => '',
+  limits = null,
 }) {
   if (!state || !device) {
     return {
@@ -179,6 +180,15 @@ export function buildChargerContent({
       },
       ...(ids.cable_state
         ? [{ label: t('cable'), icon: 'plug', value: cableSentence(state) }]
+        : []),
+      ...(Number.isFinite(Number(limits?.evseMax)) &&
+      Number.isFinite(Number(limits?.cableMax)) &&
+      Number(limits.cableMax) < Number(limits.evseMax)
+        ? [{
+            label: t('current_limit'),
+            icon: 'info',
+            value: t('cable_limit')(Number(limits.cableMax), Number(limits.evseMax)),
+          }]
         : []),
     ],
   });
