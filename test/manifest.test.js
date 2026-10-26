@@ -248,10 +248,10 @@ test('the device says it polls, and at the rate it was given', () => {
   assert.equal(device.poll_frequency, 60000);
   // Every row finds something in this snapshot, so none is left out.
   assert.equal(device.features.length, FEATURES.length);
-  assert.equal(
-    device.features.find((f) => f.external_id.endsWith(':charging_current')).read_only,
-    false,
-  );
+  // The reported register-1500 current is unreliable on this unit, so the
+  // internal control reading is not offered as a duplicate device property.
+  assert.equal(device.features.some((f) => f.external_id.endsWith(':charging_current')), false);
+  assert.ok(device.features.some((f) => f.external_id.endsWith(':total_current')));
 });
 
 // --- the two scene triggers ---
