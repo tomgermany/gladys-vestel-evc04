@@ -75,6 +75,9 @@ export class ModbusSocket {
     this.buffered = Buffer.alloc(0);
     // Queue callers so two pollers cannot overlap on this single-response protocol.
     this.requestQueue = Promise.resolve();
+    // Optional wire trace. The integration enables it only for a short diagnostic
+    // window after a widget action, so normal polling does not flood the log.
+    this.trace = null;
   }
 
   /** True while a usable connection is open. */
@@ -131,13 +134,16 @@ export class ModbusSocket {
       this.pending = {
         resolve: (bytes) => {
           clearTimeout(timer);
+          this.trace?.(`RX ${this.host}:${this.port} ${Buffer.from(bytes).toString('hex').match(/.{1,2}/g)?.join(' ') ?? ''}`);
           resolve(bytes);
         },
         reject: (err) => {
           clearTimeout(timer);
+          this.trace?.(`ERROR ${this.host}:${this.port} ${err.message}`);
           reject(err);
         },
       };
+      this.trace?.(`TX ${this.host}:${this.port} ${Buffer.from(frame).toString('hex').match(/.{1,2}/g)?.join(' ') ?? ''}`);
       this.socket.write(frame);
     });
   }
@@ -184,6 +190,7 @@ export class ModbusSocket {
 
   /** Reject whatever is waiting and drop the connection. */
   fail(err) {
+    this.trace?.(`SOCKET ${this.host}:${this.port} ${err.message}`);
     const pending = this.pending;
     this.pending = null;
     this.socket = null;
