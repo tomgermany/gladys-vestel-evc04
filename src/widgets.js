@@ -35,8 +35,8 @@
 //
 // WHAT THE CARD SHOWS
 //   - the state as ONE sentence, in a status row: "Ich lade aktuell mit 11 kW."
-//   - the charging current as a value tile, bound to the feature this integration
-//     publishes, so it follows the history without a refresh being wired here.
+//   - the measured total charging current as a value tile, bound to its own
+//     feature, so it follows the history without a refresh being wired here.
 //   - two buttons which move the setpoint inside what the device and its cable
 //     allow, by the step the widget's settings ask for.
 //
@@ -134,6 +134,9 @@ export function currentLabel(t, current) {
  */
 export const CURRENT_READING = 'charging_current';
 
+/** The separately measured sum of the three phase currents, in whole amperes on display. */
+export const TOTAL_CURRENT_READING = 'total_current';
+
 /**
  * @param {object} ctx
  * @param {object|null} ctx.state the last reading snapshot
@@ -176,14 +179,14 @@ export function buildChargerContent({
     ],
   });
 
-  // 2. The charging current, as a tile bound to its own feature: it follows the
-  //    published states, so nothing has to be refreshed here.
-  if (ids.charging_current) {
+  // 2. The measured total current, as a tile bound to its own feature. The sum is
+  //    rounded to whole amperes before publication; the control setpoint is separate.
+  if (ids.total_current) {
     components.push({
       type: 'value',
-      label: currentLabel(t, controlled),
+      label: t('current_total'),
       icon: 'plug',
-      device_feature: ids.charging_current,
+      device_feature: ids.total_current,
       unit: 'A',
       color: hasControl(controlled) ? 'info' : 'neutral',
     });
