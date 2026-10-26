@@ -31,6 +31,7 @@ const snapshot = {
   current_l1: 0,
   current_l2: 0,
   current_l3: 0,
+  total_current: 0,
   voltage_l1: 230,
   voltage_l2: 230,
   voltage_l3: 230,
@@ -171,11 +172,17 @@ test('a reading of 0 is a reading, not a missing value', () => {
 // poll plan fetched on every cycle unpublished. These tests hold the fuller list in
 // place, and each one fails for a reason a reader can act on.
 
-test('every property names its source, and its source is in the poll plan', () => {
+test('every property names a polled or derived source, and has a supported shape', () => {
   const polled = new Set(POLL_PLAN.map((entry) => entry.key));
+  // total_current is calculated from the three polled phase currents in readAll();
+  // it is deliberately not a Modbus register of its own.
+  const derived = new Set(['total_current']);
   for (const f of FEATURES) {
     assert.ok(f.source, `property "${f.key}" names no source`);
-    assert.ok(polled.has(f.source), `property "${f.key}" reads "${f.source}", which is not polled`);
+    assert.ok(
+      polled.has(f.source) || derived.has(f.source),
+      `property "${f.key}" reads "${f.source}", which is neither polled nor derived`,
+    );
     assert.ok(['number', 'state', 'sentence'].includes(f.as), `property "${f.key}" has no shape`);
   }
 });
@@ -211,6 +218,8 @@ test('the units are converted once, where the row declares them', () => {
   const at = (key) => featureValue(FEATURES.find((f) => f.key === key), snapshot);
   // Milliamperes to amperes.
   assert.equal(at('current_l1'), 0);
+  // The total is rounded to whole amperes for the published feature.
+  assert.equal(featureValue(FEATURES.find((f) => f.key === 'total_current'), { total_current: 11.6 }), 12);
   // Tenths of an ampere to amperes: 130 is 13 A.
   assert.equal(at('charging_current'), 13);
   // Tenths of a kilowatt-hour to kilowatt-hours.
