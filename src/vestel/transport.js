@@ -73,6 +73,8 @@ export class ModbusSocket {
     // one request in flight.
     this.pending = null;
     this.buffered = Buffer.alloc(0);
+    // Queue callers so two pollers cannot overlap on this single-response protocol.
+    this.requestQueue = Promise.resolve();
   }
 
   /** True while a usable connection is open. */
@@ -105,7 +107,16 @@ export class ModbusSocket {
   }
 
   /** Send one request and resolve with its complete answer frame. */
-  async request(frame) {
+  request(frame) {
+    const run = () => this.performRequest(frame);
+    const result = this.requestQueue.then(run, run);
+    // A failed request must not poison the queue for every request after it.
+    this.requestQueue = result.catch(() => {});
+    return result;
+  }
+
+  /** One serialized request on the socket. */
+  async performRequest(frame) {
     await this.open();
     if (this.pending) throw new TransportError('A request is already in flight');
 

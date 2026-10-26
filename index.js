@@ -62,7 +62,7 @@ import {
   TOTAL_CURRENT_READING,
 } from './src/widgets.js';
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
-import { t, deviceSentence } from './src/labels.js';
+import { t, deviceSentence, cableSentence } from './src/labels.js';
 import { CONTROL } from './src/vestel/registers.js';
 
 const gladys = new GladysIntegration();
@@ -137,13 +137,16 @@ async function connectDevice() {
  */
 async function establish() {
   const sameTarget = Boolean(
-    client && device && device.host === config.host && client.port === config.modbus_port,
+    device &&
+      device.host === config.host &&
+      (device.modbusPort ?? client?.port ?? config.modbus_port) === config.modbus_port,
   );
   if (client?.transport?.isOpen && sameTarget) {
-    state = await client.readAll().catch((err) => {
+    const readings = await client.readAll().catch((err) => {
       logger.warn(`Refresh on the existing connection failed: ${err.message}`);
-      return state;
+      return null;
     });
+    if (readings) state = { ...(state ?? {}), ...readings };
     lastRead = Date.now();
     await gladys.setConnectionStatus(true);
     return true;
@@ -153,10 +156,12 @@ async function establish() {
     await client.transport?.close?.().catch(() => {});
     client = null;
   }
-  state = null;
-  device = null;
-  previousCharging = null;
-  control.clear();
+  if (!sameTarget) {
+    state = null;
+    device = null;
+    previousCharging = null;
+    control.clear();
+  }
 
   if (!config.host) {
     await gladys.setConnectionStatus(false, NO_HOST);
@@ -179,6 +184,7 @@ async function establish() {
 
     device = {
       host: config.host,
+      modbusPort: config.modbus_port,
       serial: info.serial,
       model: info.model,
       firmware: info.firmware,
@@ -188,7 +194,8 @@ async function establish() {
 
     const limits = await client.readLimits().catch(() => null);
     device.limits = limits;
-    state = await client.readAll();
+    const readings = await client.readAll();
+    state = { ...(sameTarget ? state ?? {} : {}), ...readings };
     lastRead = Date.now();
     logger.info(
       `Wallbox ready: ${device.serial || 'no serial'}, firmware ${info.firmware || 'unknown'}, ` +
@@ -277,7 +284,8 @@ async function publishDevice() {
  */
 async function refresh() {
   if (!client) return;
-  state = await client.readAll();
+  const readings = await client.readAll();
+  state = { ...(state ?? {}), ...readings };
   lastRead = Date.now();
 
   const { events, side } = chargingEvents({ snapshot: state, previous: previousCharging });
@@ -359,6 +367,7 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
     controlled: control.active ? control.current : null,
     settings,
     t,
+    cableSentence: (snapshot) => cableSentence(snapshot?.cable_state),
     sentence: (snapshot) =>
       deviceSentence({
         word: Evc04Client.stateWord(snapshot, 'chargepoint_state'),
@@ -382,6 +391,7 @@ gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
     params,
     state,
     limits: client?.getLimits(),
+    controlled: control.active ? control.current : null,
     t,
   });
   await withConnection(async (connection) => {

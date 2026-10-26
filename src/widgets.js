@@ -145,6 +145,7 @@ export const TOTAL_CURRENT_READING = 'total_current';
  * @param {object} ctx.settings the widget instance settings, see stepFromSettings
  * @param {Function} ctx.t labels, per language
  * @param {Function} ctx.sentence the state as one sentence
+ * @param {Function} ctx.cableSentence the cable state as a readable sentence
  */
 export function buildChargerContent({
   state,
@@ -154,6 +155,7 @@ export function buildChargerContent({
   settings = {},
   t = (key) => key,
   sentence = () => '',
+  cableSentence = () => '',
 }) {
   if (!state || !device) {
     return {
@@ -175,6 +177,9 @@ export function buildChargerContent({
         value: sentence(state),
         color: stateColor(state),
       },
+      ...(ids.cable_state
+        ? [{ label: t('cable'), icon: 'plug', value: cableSentence(state) }]
+        : []),
     ],
   });
 
@@ -188,16 +193,6 @@ export function buildChargerContent({
       device_feature: ids.total_current,
       unit: 'A',
       color: hasControl(controlled) ? 'info' : 'neutral',
-    });
-  }
-
-  // 3. The cable state, as a second tile bound to the text feature.
-  if (ids.cable_state) {
-    components.push({
-      type: 'value',
-      label: t('cable'),
-      icon: 'plug',
-      device_feature: ids.cable_state,
     });
   }
 
@@ -266,6 +261,7 @@ export function chargerAction({
   params,
   state,
   limits,
+  controlled = null,
   t = (key) => key,
 }) {
   switch (actionKey) {
@@ -273,7 +269,11 @@ export function chargerAction({
     case ACTION.CURRENT_UP: {
       const step = Number(params?.step ?? CURRENT_STEP);
       const delta = actionKey === ACTION.CURRENT_UP ? step : -step;
-      const base = amps(state?.[CURRENT_READING]);
+      const base = hasControl(controlled)
+        ? amps(controlled)
+        : state?.[TOTAL_CURRENT_READING] !== null && state?.[TOTAL_CURRENT_READING] !== undefined
+          ? amps(state[TOTAL_CURRENT_READING])
+          : amps(state?.[CURRENT_READING]);
       const min = Math.max(MIN_CURRENT, Number(limits?.min) || MIN_CURRENT);
       const ceiling = Number(limits?.max);
       const max = Number.isFinite(ceiling) ? Math.max(min, ceiling) : Infinity;

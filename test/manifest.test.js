@@ -309,7 +309,7 @@ test('the kilowatt-hour conversion uses the step of the source register', () => 
 });
 
 
-test('the widget shows both total current and cable state as separate tiles', () => {
+test('the widget shows total current as a tile and cable state as readable status text', () => {
   const content = buildChargerContent({
     state: snapshot,
     device: { name: 'Wallbox' },
@@ -317,10 +317,14 @@ test('the widget shows both total current and cable state as separate tiles', ()
     controlled: 13,
     t,
     sentence: () => 'Verfügbar – kein Fahrzeug angeschlossen.',
+    cableSentence: () => 'Kabel verriegelt.',
   });
   const tiles = content.components.filter((component) => component.type === 'value');
-  assert.deepEqual(tiles.map((tile) => tile.device_feature), ['feature:total', 'feature:cable']);
-  assert.deepEqual(tiles.map((tile) => tile.label), [t('current_total'), t('cable')]);
+  assert.deepEqual(tiles.map((tile) => tile.device_feature), ['feature:total']);
+  assert.deepEqual(tiles.map((tile) => tile.label), [t('current_total')]);
+  assert.ok(content.components[0].items.some(
+    (item) => item.label === t('cable') && item.value === 'Kabel verriegelt.',
+  ));
 });
 
 // --- the widget buttons ---
@@ -341,13 +345,32 @@ test('the widget carries exactly two action values, and neither of them releases
   assert.deepEqual(Object.values(ACTION).sort(), ['current_down', 'current_up']);
 });
 
-test('a tap on + moves the current up by one ampere from what the user sees', () => {
+test('a tap on + moves the current up by one ampere from the reported reading', () => {
   const intent = chargerAction({
     actionKey: ACTION.CURRENT_UP,
     params: { step: 1 },
-    state: { charging_current: 16 },
+    state: { charging_current: 160 },
   });
   assert.equal(intent.current, 17);
+});
+
+test('the last controlled setpoint beats the unreliable register-1500 reading', () => {
+  const intent = chargerAction({
+    actionKey: ACTION.CURRENT_UP,
+    params: { step: 1 },
+    state: { charging_current: 0, total_current: 6.079 },
+    controlled: 6,
+  });
+  assert.equal(intent.current, 7);
+});
+
+test('measured phase current is the fallback when register 1500 reports zero', () => {
+  const intent = chargerAction({
+    actionKey: ACTION.CURRENT_UP,
+    params: { step: 1 },
+    state: { charging_current: 0, total_current: 6.079 },
+  });
+  assert.equal(intent.current, 7);
 });
 
 test('a tap on − moves the current down and stops at the floor', () => {
