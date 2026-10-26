@@ -369,14 +369,16 @@ function featureId(key) {
 }
 
 // --- Discovery ---------------------------------------------------------------
-gladys.onScanRequest(async () => {
-  logger.info('onScanRequest -> called by Gladys');
-  if (!client && !(await connectDevice())) {
-    logger.warn('onScanRequest -> no wallbox, nothing published');
-    return;
-  }
-  await publishDevice();
-});
+gladys.onScanRequest(async () =>
+  serializeModbus(async () => {
+    logger.info('onScanRequest -> called by Gladys');
+    if (!client && !(await connectDevice())) {
+      logger.warn('onScanRequest -> no wallbox, nothing published');
+      return;
+    }
+    await publishDevice();
+  }),
+);
 
 // --- Polling -----------------------------------------------------------------
 // Gladys ticks a polled device once a minute at most; the interval the user chose
@@ -543,26 +545,30 @@ gladys.onAction('test_connection', async () => {
 });
 
 // --- Connection lifecycle ----------------------------------------------------
-gladys.on('connected', async () => {
-  try {
-    await readConfig();
+gladys.on('connected', async () =>
+  serializeModbus(async () => {
+    try {
+      await readConfig();
+      if (await connectDevice()) await publishDevice();
+      gladys.requestWidgetRefresh(CHARGER_WIDGET);
+    } catch (err) {
+      logger.error('Post-connection initialization failed', err.message);
+    }
+  }),
+);
+
+gladys.onConfigUpdated(async (newConfig) =>
+  serializeModbus(async () => {
+    config = normalizeConfig(newConfig);
+    control.configure({
+      failsafeCurrent: config.failsafe_current,
+      failsafeTimeout: config.failsafe_timeout,
+    });
+    previousCharging = null;
     if (await connectDevice()) await publishDevice();
     gladys.requestWidgetRefresh(CHARGER_WIDGET);
-  } catch (err) {
-    logger.error('Post-connection initialization failed', err.message);
-  }
-});
-
-gladys.onConfigUpdated(async (newConfig) => {
-  config = normalizeConfig(newConfig);
-  control.configure({
-    failsafeCurrent: config.failsafe_current,
-    failsafeTimeout: config.failsafe_timeout,
-  });
-  previousCharging = null;
-  if (await connectDevice()) await publishDevice();
-  gladys.requestWidgetRefresh(CHARGER_WIDGET);
-});
+  }),
+);
 
 // --- Shutdown ----------------------------------------------------------------
 gladys.handleShutdown(async (signal) => {
