@@ -387,6 +387,9 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
  * limits the DEVICE reported, not against a constant.
  */
 gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
+  logger.info(
+    `Widget action received: key=${String(actionKey)}, params=${JSON.stringify(params ?? {})}`,
+  );
   const intent = chargerAction({
     actionKey,
     params,
@@ -395,11 +398,32 @@ gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
     controlled: control.active ? control.current : null,
     t,
   });
+  logger.info(
+    `Widget setpoint calculated: action=${String(actionKey)}, target=${intent.current} A, ` +
+      `limits=${JSON.stringify(client?.getLimits?.() ?? null)}, ` +
+      `measured_total=${state?.total_current ?? '?'}, register_1500=${state?.charging_current ?? '?'}`,
+  );
   await withConnection(async (connection) => {
-    await connection.writeRegister(CONTROL.charging_current, intent.current);
+    logger.info(`Widget setpoint write starting: register ${CONTROL.charging_current}, value=${intent.current} A`);
+    try {
+      await connection.writeRegister(CONTROL.charging_current, intent.current);
+      logger.info(`Widget setpoint write confirmed: register ${CONTROL.charging_current}, value=${intent.current} A`);
+    } catch (err) {
+      logger.error(
+        `Widget setpoint write failed: register ${CONTROL.charging_current}, value=${intent.current} A: ${err.message}`,
+      );
+      throw err;
+    }
   });
   control.set(intent.current);
-  await refresh().catch(() => {});
+  await refresh().catch((err) => {
+    logger.warn(`Widget setpoint readback failed: ${err.message}`);
+  });
+  logger.info(
+    `Widget setpoint readback: requested=${intent.current} A, ` +
+      `register_1500=${state?.charging_current ?? '?'}, ` +
+      `total_current=${state?.total_current ?? '?' } A, power=${state?.power ?? '?'} W`,
+  );
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
   return intent.toast;
 });
