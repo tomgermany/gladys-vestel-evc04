@@ -30,18 +30,18 @@
 // text on the first attempt with that reading — so `ADDRESS_BASE` stays as it is.
 //
 // WHAT MAY BE WRITTEN, AND WHAT MAY ONLY BE READ
-// Exactly two registers are written, and both belong to the charge:
+// Four holding registers are written, as required by the EVC04 Modbus specification:
 //
-//   CONTROL.charging_current (5004)   the current the vehicle may draw
-//   FAILSAFE.alive (6000)             the heartbeat that keeps it in force
+//   FAILSAFE.current (2000)           fallback current during communication loss
+//   FAILSAFE.timeout (2002)            timeout for fallback and heartbeat
+//   CONTROL.charging_current (5004)   dynamic current the vehicle may draw
+//   FAILSAFE.alive (6000)              heartbeat that keeps dynamic control active
 //
-// Everything else is READ. The limit registers are the installer's figures and
-// this integration respects them; the failsafe registers are read back but never
-// set. What the rule buys is the answer to a plain question: what can someone who
-// does not know this device do from Gladys? They can change how much current
-// flows, which is the feature. They cannot reconfigure the wallbox.
+// The first three are initialized in order on every new TCP connection; the alive
+// register is updated periodically. Measurement and installer-limit registers remain
+// read-only.
 //
-// NO SCALE FACTORS ON THIS MAP
+// // NO SCALE FACTORS ON THIS MAP
 // The specification states every unit outright — mA, V, W, 0.1 kWh, Wh, A — so
 // nothing here needs a factor register. That is the main difference from a SunSpec
 // device, and the reason this map is much shorter than the WattWächter's.
@@ -228,13 +228,11 @@ export const SESSION = {
 };
 
 /**
- * The failsafe registers. READ/WRITE on the device, READ ONLY here.
+ * The failsafe registers. The manufacturer marks all three as READ/WRITE.
  *
- * The specification calls them R/W, and so the integration could set them — but a
- * failsafe value is device configuration, and it is not something Gladys has any
- * business changing. So they are read back and shown, and never written.
- *
- * `alive` is the one exception, and it is not configuration: the master writes 1,
+ * On each new connection, the integration writes the configured fallback current
+ * and timeout before setting the dynamic charging current. `alive` is the recurring
+ * heartbeat: the master writes 1,
  * the wallbox writes 0 back, and it checks the register every `timeout / 2`
  * seconds. An unanswered alive register means "the master is gone", and the wallbox
  * falls back to `current`. The period cannot go below 3 seconds.
@@ -248,8 +246,9 @@ export const FAILSAFE = {
 /**
  * Where the charging current is written.
  *
- * `Dynamic charging current`, uint16, AMPERES. This is the ONLY register that
- * steers a charge — the device has no start and no stop command.
+ * `Dynamic charging current`, uint16, AMPERES. This steers the normal charge;
+ * failsafe current applies only after communication loss. The device has no start
+ * and no stop command.
  */
 export const CONTROL = {
   charging_current: 5004,
