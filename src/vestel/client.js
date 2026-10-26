@@ -226,6 +226,18 @@ export class Evc04Client extends VestelModbus {
       DEFAULT_MAX_CURRENT,
     );
     this.limits = { min: floor, max: Math.max(floor, ceiling), reportedMin: min };
+
+    // Temporary, read-only diagnosis: show exactly which register narrows the
+    // allowed setpoint range. This is essential when the installer configured
+    // 6-16 A in the web interface but the integration calculates 6-6 A.
+    this.diagnostic?.(
+      'Current-limit diagnostic (raw register values, A): ' +
+        `1102 evse_min=${min ?? 'not available'}; ` +
+        `1104 evse_max=${evseMax ?? 'not available'}; ` +
+        `1106 cable_max=${cableMax ?? 'not available'}; ` +
+        `1100 session_max=${sessionMax ?? 'not available'}; ` +
+        `effective_range=${this.limits.min}-${this.limits.max} A`,
+    );
     return this.limits;
   }
 
