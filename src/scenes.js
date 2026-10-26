@@ -133,7 +133,6 @@ export const SCENE_ACTIONS = {
     } else {
       // Compatibility for isolated unit tests/callers; the integration supplies
       // applySetpoint so it can initialize failsafe registers before taking control.
-      const { CONTROL } = await import('./vestel/registers.js');
       await client.writeRegister(CONTROL.charging_current, current);
       control.set(current);
     }
