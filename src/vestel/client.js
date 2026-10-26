@@ -105,6 +105,20 @@ export class Evc04Client extends VestelModbus {
         this.warn?.(entry.key, err);
       }
     }
+
+    // Temporary, read-only diagnosis for the reported 0 A session-current issue.
+    // These are the unscaled values from this SAME poll, so we can compare the
+    // session report with all phases and total power without changing Gladys data.
+    const raw = (key) => snapshot[key] ?? 'not available';
+    this.diagnostic?.(
+      'Charging diagnostic (raw register values): ' +
+        `1500 charging_current=${raw('charging_current')} (0.1 A); ` +
+        `1008 current_l1=${raw('current_l1')} (mA); ` +
+        `1010 current_l2=${raw('current_l2')} (mA); ` +
+        `1012 current_l3=${raw('current_l3')} (mA); ` +
+        `1020-1021 power=${raw('power')} (W)`,
+    );
+
     return snapshot;
   }
 
