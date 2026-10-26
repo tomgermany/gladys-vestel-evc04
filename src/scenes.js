@@ -31,7 +31,7 @@
 // force. Nothing here can change how the wallbox is configured.
 // -----------------------------------------------------------------------------
 
-import { CONTROL } from './vestel/registers.js';
+
 
 /** The trigger keys, as declared in the manifest. */
 export const TRIGGER = {
@@ -120,7 +120,7 @@ export const SCENE_ACTIONS = {
    * from register 1102: on the reference device that register answers 0, which is a
    * setpoint the wallbox refuses.
    */
-  async set_charging_current({ client, fields, control }) {
+  async set_charging_current({ client, fields, control, applySetpoint }) {
     if (!client) throw new Error('Keine Verbindung zur Wallbox');
     const wanted = Number(fields?.current);
     if (!Number.isFinite(wanted)) throw new Error('Der Ladestrom muss eine Zahl sein');
@@ -128,8 +128,15 @@ export const SCENE_ACTIONS = {
     const limits = client.getLimits();
     const current = Math.min(limits.max, Math.max(limits.min, Math.round(wanted)));
 
-    await client.writeRegister(CONTROL.charging_current, current);
-    control.set(current);
+    if (applySetpoint) {
+      await applySetpoint(client, current);
+    } else {
+      // Compatibility for isolated unit tests/callers; the integration supplies
+      // applySetpoint so it can initialize failsafe registers before taking control.
+      const { CONTROL } = await import('./vestel/registers.js');
+      await client.writeRegister(CONTROL.charging_current, current);
+      control.set(current);
+    }
     return { current };
   },
 };
