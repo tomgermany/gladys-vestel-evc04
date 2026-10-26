@@ -59,7 +59,6 @@ import {
   CHARGER_WIDGET,
   buildChargerContent,
   chargerAction,
-  CURRENT_READING,
   TOTAL_CURRENT_READING,
 } from './src/widgets.js';
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
