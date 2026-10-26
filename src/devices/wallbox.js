@@ -138,6 +138,18 @@ export const FEATURES = [
 
   // --- The live electrical reading ---
   {
+    key: 'total_current',
+    name: 'Ladestrom gesamt',
+    source: 'total_current',
+    as: 'number',
+    category: CAT_ENERGY,
+    type: CURRENT,
+    unit: UNIT.AMPERE,
+    // The snapshot keeps the precise sum; Gladys displays whole amperes.
+    scale: 1,
+    writable: false,
+  },
+  {
     key: 'power',
     name: 'Ladeleistung',
     source: 'power',
@@ -347,6 +359,9 @@ export function featureValue(feature, snapshot) {
 
   const raw = Evc04Client.reading(snapshot, feature.source);
   if (raw === null || raw === undefined) return null;
+  // The total is calculated precisely from all phases in the client, but the
+  // displayed Gladys feature is intentionally a whole number of amperes.
+  if (feature.source === 'total_current') return Math.round(raw);
   if (feature.scale === undefined || feature.scale === 1) return raw;
   return Math.round(raw * feature.scale * 10000) / 10000;
 }
