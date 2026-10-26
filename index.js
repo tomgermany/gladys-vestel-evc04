@@ -60,6 +60,7 @@ import {
   buildChargerContent,
   chargerAction,
   CURRENT_READING,
+  TOTAL_CURRENT_READING,
 } from './src/widgets.js';
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
 import { t, deviceSentence } from './src/labels.js';
@@ -346,7 +347,7 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
   return buildChargerContent({
     state,
     device,
-    ids: { charging_current: featureId(CURRENT_READING) },
+    ids: { total_current: featureId(TOTAL_CURRENT_READING) },
     controlled: control.active ? control.current : null,
     settings,
     t,
