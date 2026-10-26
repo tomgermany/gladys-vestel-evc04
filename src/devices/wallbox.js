@@ -278,28 +278,10 @@ export const FEATURES = [
     writable: false,
   },
 
-  // --- The control ---
-  // The charging current is the only value this integration steers, because it is
-  // the only thing the device can be told. It overrides what the wallbox would do on
-  // its own, and the heartbeat in src/alive.js is what keeps it in force.
-  //
-  // The source is the DEVICE'S REPORT (register 1500, tenths of an ampere), not the
-  // setpoint we wrote: the tile therefore shows what is really there.
-  {
-    key: 'charging_current',
-    name: 'Ladestrom',
-    source: 'charging_current',
-    as: 'number',
-    category: CAT_ENERGY,
-    type: CURRENT,
-    unit: UNIT.AMPERE,
-    // Register 1500 counts tenths of an ampere: 130 is 13 A.
-    scale: 1 / 10,
-    min: DEFAULT_MIN_CURRENT,
-    max: DEFAULT_MAX_CURRENT,
-    bounds: true,
-    writable: true,
-  },
+  // The setpoint is kept as an internal snapshot value for the widget's +/−
+  // buttons, but is not published as a device feature. Register 1500 reports 0 A
+  // on this wallbox, so showing it as a second "Ladestrom" property is misleading.
+
 ];
 
 /**
