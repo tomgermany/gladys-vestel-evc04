@@ -181,8 +181,9 @@ async function establish() {
     return false;
   }
 
+  let connection = null;
   try {
-    const connection = new Evc04Client({
+    connection = new Evc04Client({
       host: config.host,
       port: config.modbus_port,
       unitId: config.unit_id,
@@ -239,8 +240,9 @@ async function establish() {
   } catch (err) {
     // A failed attempt must not leave a half-open socket behind: this device allows
     // one master, and a stranded socket would block the next attempt.
-    client?.transport?.reset();
-    client = null;
+    await connection?.transport?.close?.().catch(() => {});
+    connection?.transport?.reset();
+    if (client === connection) client = null;
     logger.error(`Wallbox connection failed (${config.host}): ${err.message}`);
     await gladys
       .setConnectionStatus(false, {
