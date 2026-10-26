@@ -31,8 +31,8 @@ export const DEFAULT_CONFIG = {
   // value a car accepts is the safe choice: a released control should mean
   // "charge slowly", not "charge uncontrolled".
   failsafe_current: 6,
-  // Seconds after which the wallbox switches to the failsafe current. The
-  // heartbeat is written every half of it, never less than every 3 seconds.
+  // Written to register 2002 on connection. The wallbox falls back to 6 A if
+  // the heartbeat is missed; the heartbeat period is half this timeout, at least 3 s.
   failsafe_timeout: 20,
 };
 
