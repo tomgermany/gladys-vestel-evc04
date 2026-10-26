@@ -423,7 +423,7 @@ test('session max current does not override the configured EVSE and cable ceilin
   client.readOptionalUint16 = async (address) => values.get(address) ?? null;
 
   const limits = await client.readLimits();
-  assert.deepEqual(limits, { min: 6, max: 16, reportedMin: 6 });
+  assert.deepEqual(limits, { min: 6, max: 16, reportedMin: 6, evseMax: 16, cableMax: 32 });
 });
 
 test('a tap can never leave the range the device reported', () => {
