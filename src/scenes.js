@@ -33,6 +33,8 @@
 
 
 
+import { CONTROL } from './vestel/registers.js';
+
 /** The trigger keys, as declared in the manifest. */
 export const TRIGGER = {
   CHARGING_STARTED: 'charging_started',
