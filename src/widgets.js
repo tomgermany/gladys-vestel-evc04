@@ -126,11 +126,10 @@ export function currentLabel(t, current) {
 }
 
 /**
- * The snapshot key the current buttons move, and the one the tile shows.
+ * The snapshot key the current buttons use as their fallback base.
  *
- * One name in one place: the poll plan, the device builder and the buttons all
- * speak about the same reading, and a second spelling of it is a second place to
- * be wrong.
+ * This remains separate from TOTAL_CURRENT_READING: the measured phase sum is a
+ * display value, while these buttons change the per-phase charging-current setpoint.
  */
 export const CURRENT_READING = 'charging_current';
 
@@ -141,7 +140,7 @@ export const TOTAL_CURRENT_READING = 'total_current';
  * @param {object} ctx
  * @param {object|null} ctx.state the last reading snapshot
  * @param {object|null} ctx.device { name, serial, model, host }
- * @param {object} ctx.ids { charging_current } external id of the published feature
+ * @param {object} ctx.ids { total_current } external id of the published feature
  * @param {number|false|null} ctx.controlled the charging current we have set
  * @param {object} ctx.settings the widget instance settings, see stepFromSettings
  * @param {Function} ctx.t labels, per language
