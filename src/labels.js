@@ -96,7 +96,7 @@ export const TEXT = {
     current: 'Charging current',
     current_total: 'Total charging current',
     current_limit: 'Current limit',
-    cable_limit: (cable, wallbox) => `Cable ${cable} A (wallbox ${wallbox} A)`
+    cable_limit: (cable, wallbox) => `Cable ${cable} A (wallbox ${wallbox} A)`,
     cable: 'Cable state',
     energy: 'Energy charged',
     meter: 'Meter reading',
@@ -123,7 +123,7 @@ export const TEXT = {
     current: 'Courant de charge',
     current_total: 'Courant de charge total',
     current_limit: 'Limite de courant',
-    cable_limit: (cable, wallbox) => `Câble ${cable} A (borne ${wallbox} A)`
+    cable_limit: (cable, wallbox) => `Câble ${cable} A (borne ${wallbox} A)`,
     cable: 'État du câble',
     energy: 'Énergie chargée',
     meter: 'Index',
@@ -150,7 +150,7 @@ export const TEXT = {
     current: 'Corriente de carga',
     current_total: 'Corriente de carga total',
     current_limit: 'Límite de corriente',
-    cable_limit: (cable, wallbox) => `Cable ${cable} A (cargador ${wallbox} A)`
+    cable_limit: (cable, wallbox) => `Cable ${cable} A (cargador ${wallbox} A)`,
     cable: 'Estado del cable',
     energy: 'Energía cargada',
     meter: 'Lectura del contador',
