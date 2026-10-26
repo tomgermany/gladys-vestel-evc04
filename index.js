@@ -351,6 +351,10 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
         Number.isFinite(Evc04Client.reading(state, TOTAL_CURRENT_READING))
           ? featureId(TOTAL_CURRENT_READING)
           : null,
+      cable_state:
+        Evc04Client.stateWord(state, 'cable_state') !== null
+          ? featureId('cable_state')
+          : null,
     },
     controlled: control.active ? control.current : null,
     settings,

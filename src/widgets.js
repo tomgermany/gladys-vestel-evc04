@@ -140,7 +140,7 @@ export const TOTAL_CURRENT_READING = 'total_current';
  * @param {object} ctx
  * @param {object|null} ctx.state the last reading snapshot
  * @param {object|null} ctx.device { name, serial, model, host }
- * @param {object} ctx.ids { total_current } external id of the published feature
+ * @param {object} ctx.ids { total_current, cable_state } external ids of published features
  * @param {number|false|null} ctx.controlled the charging current we have set
  * @param {object} ctx.settings the widget instance settings, see stepFromSettings
  * @param {Function} ctx.t labels, per language
@@ -188,6 +188,16 @@ export function buildChargerContent({
       device_feature: ids.total_current,
       unit: 'A',
       color: hasControl(controlled) ? 'info' : 'neutral',
+    });
+  }
+
+  // 3. The cable state, as a second tile bound to the text feature.
+  if (ids.cable_state) {
+    components.push({
+      type: 'value',
+      label: t('cable'),
+      icon: 'plug',
+      device_feature: ids.cable_state,
     });
   }
 

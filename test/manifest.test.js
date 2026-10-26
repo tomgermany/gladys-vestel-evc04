@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { SCENE_ACTIONS, TRIGGER, chargingEvents, kilowattHours } from '../src/scenes.js';
-import { CHARGER_WIDGET, chargerAction, ACTION, stepFromSettings, STEP_CHOICES } from '../src/widgets.js';
+import { CHARGER_WIDGET, chargerAction, ACTION, stepFromSettings, STEP_CHOICES, buildChargerContent } from '../src/widgets.js';
 import { stateSentence, cableSentence, deviceSentence, t } from '../src/labels.js';
 import { CHARGEPOINT_STATE, CABLE_STATE, POLL_PLAN } from '../src/vestel/registers.js';
 import { Evc04Client } from '../src/vestel/client.js';
@@ -192,9 +192,9 @@ test('no two properties share a key', () => {
   assert.equal(new Set(keys).size, keys.length, `duplicate key in ${keys.join(', ')}`);
 });
 
-test('the ampere reading is the only property the user can set', () => {
-  const writable = FEATURES.filter((f) => f.writable).map((f) => f.key);
-  assert.deepEqual(writable, ['charging_current']);
+test('the unreliable register-1500 value is not published as a device feature', () => {
+  assert.equal(FEATURES.some((f) => f.key === 'charging_current'), false);
+  assert.ok(FEATURES.some((f) => f.key === 'total_current'));
 });
 
 test('the state is offered as a sentence and as a code', () => {
@@ -220,8 +220,8 @@ test('the units are converted once, where the row declares them', () => {
   assert.equal(at('current_l1'), 0);
   // The total is rounded to whole amperes for the published feature.
   assert.equal(featureValue(FEATURES.find((f) => f.key === 'total_current'), { total_current: 11.6 }), 12);
-  // Tenths of an ampere to amperes: 130 is 13 A.
-  assert.equal(at('charging_current'), 13);
+  // Register 1500 remains an internal widget-control value, not a published feature.
+  assert.equal(Evc04Client.reading(snapshot, 'charging_current'), 130);
   // Tenths of a kilowatt-hour to kilowatt-hours.
   assert.equal(at('meter_reading'), 12345.6);
   // Watt-hours to kilowatt-hours.
@@ -306,6 +306,21 @@ test('the kilowatt-hour conversion uses the step of the source register', () => 
   assert.equal(kilowattHours(123456, 10), 12.346);
   assert.equal(kilowattHours(4321, 1), 4.321);
   assert.equal(kilowattHours(undefined, 1), null);
+});
+
+
+test('the widget shows both total current and cable state as separate tiles', () => {
+  const content = buildChargerContent({
+    state: snapshot,
+    device: { name: 'Wallbox' },
+    ids: { total_current: 'feature:total', cable_state: 'feature:cable' },
+    controlled: 13,
+    t,
+    sentence: () => 'Verfügbar – kein Fahrzeug angeschlossen.',
+  });
+  const tiles = content.components.filter((component) => component.type === 'value');
+  assert.deepEqual(tiles.map((tile) => tile.device_feature), ['feature:total', 'feature:cable']);
+  assert.deepEqual(tiles.map((tile) => tile.label), [t('current_total'), t('cable')]);
 });
 
 // --- the widget buttons ---
