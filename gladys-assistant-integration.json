@@ -170,10 +170,10 @@
         "es": "Plazo del latido en segundos"
       },
       "description": {
-        "de": "Wird NICHT auf die Wallbox geschrieben. Sie bestimmt nur, wie oft der Herzschlag (Register 6000) bedient wird: die halbe Frist, mindestens alle 3 Sekunden. Werkseitig sind es 20 Sekunden.",
-        "en": "This is NOT written to the wallbox. It only decides how often the heartbeat (register 6000) is answered: half of it, never less than every 3 seconds. The factory setting is 20 seconds.",
-        "fr": "N'est PAS écrit sur la borne. Il détermine seulement la fréquence d'entretien du registre alive (6000) : la moitié, jamais moins de 3 secondes. Le réglage d'usine est de 20 secondes.",
-        "es": "NO se escribe en el cargador. Solo decide cada cuánto se atiende el registro alive (6000): la mitad, nunca menos de 3 segundos. De fábrica son 20 segundos."
+        "de": "Wird beim Verbindungsaufbau in das Failsafe-Timeout-Register (2002) geschrieben. Bei Kommunikationsverlust fällt die Wallbox nach dieser Frist auf den Failsafe-Strom von 6 A zurück. Der Herzschlag (Register 6000) wird alle halbe Frist bedient, mindestens alle 3 Sekunden. Standard: 20 Sekunden.",
+        "en": "Written to the failsafe timeout register (2002) when the connection is established. If communication is lost, the wallbox falls back to the 6 A failsafe current after this interval. The heartbeat (register 6000) is updated every half interval, never less often than every 3 seconds. Default: 20 seconds.",
+        "fr": "Écrit dans le registre de délai de sécurité (2002) à l'établissement de la connexion. En cas de perte de communication, la borne revient au courant de sécurité de 6 A après ce délai. Le registre alive (6000) est entretenu à la moitié du délai, sans jamais descendre sous 3 secondes. Valeur par défaut : 20 secondes.",
+        "es": "Se escribe en el registro de tiempo de seguridad (2002) al establecer la conexión. Si se pierde la comunicación, el cargador vuelve a la corriente de seguridad de 6 A tras ese intervalo. El registro alive (6000) se actualiza cada mitad del intervalo, nunca con una frecuencia inferior a 3 segundos. Valor predeterminado: 20 segundos."
       }
     }
   ],
