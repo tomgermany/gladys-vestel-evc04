@@ -41,7 +41,7 @@
 // register is updated periodically. Measurement and installer-limit registers remain
 // read-only.
 //
-// // NO SCALE FACTORS ON THIS MAP
+// NO SCALE FACTORS ON THIS MAP
 // The specification states every unit outright — mA, V, W, 0.1 kWh, Wh, A — so
 // nothing here needs a factor register. That is the main difference from a SunSpec
 // device, and the reason this map is much shorter than the WattWächter's.
