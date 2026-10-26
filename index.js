@@ -126,9 +126,7 @@ async function applySetpoint(connection, current) {
       : DEFAULT_FAILSAFE_TIMEOUT_S;
 
   await connection.writeRegister(FAILSAFE.current, failsafeCurrent);
-  await wait(250);
   await connection.writeRegister(FAILSAFE.timeout, failsafeTimeout);
-  await wait(250);
   await connection.writeRegister(CONTROL.charging_current, current);
   await wait(500);
   control.set(current);
