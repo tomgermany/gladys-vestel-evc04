@@ -75,6 +75,11 @@ let device = null; // { host, serial, model, name }: the identity of the wallbox
 let lastRead = 0; // when the readings were taken, to honour the configured interval
 let previousCharging = null; // the last charging flank, see chargingEvents()
 let connecting = null; // the connect attempt running right now, or null
+let modbusTraceUntil = 0; // short wire-level trace window opened by a widget tap
+
+function traceModbus(message) {
+  if (Date.now() <= modbusTraceUntil) logger.info(`MODBUS TRACE ${message}`);
+}
 
 /** The heartbeat. Its `write` runs on whatever connection is current. */
 const control = new AliveControl({
@@ -180,6 +185,7 @@ async function establish() {
     // Keeping it at info level makes the temporary diagnostic visible without
     // incorrectly classifying a valid register response as a warning.
     connection.diagnostic = (message) => logger.info(message);
+    connection.transport.trace = (message) => traceModbus(message);
     const info = await connection.connect();
 
     device = {
@@ -387,6 +393,10 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
  * limits the DEVICE reported, not against a constant.
  */
 gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
+  // Capture every raw Modbus TCP frame and socket error for 20 seconds. This includes
+  // the setpoint write, its device echo, the follow-up reads, and heartbeat traffic.
+  modbusTraceUntil = Date.now() + 20000;
+  logger.info('MODBUS TRACE window opened for 20 seconds after widget action');
   logger.info(
     `Widget action received: key=${String(actionKey)}, params=${JSON.stringify(params ?? {})}`,
   );
