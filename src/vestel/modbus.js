@@ -37,6 +37,8 @@ import { ModbusSocket, DEFAULT_UNIT_ID } from './transport.js';
 
 /** 0x04 — read input registers (read-only measurements and states). */
 export const FUNC_READ = 0x04;
+/** 0x03 — read holding registers, including writable control registers. */
+export const FUNC_READ_HOLDING = 0x03;
 /** 0x06 — write a single register. */
 export const FUNC_WRITE_ONE = 0x06;
 
@@ -53,14 +55,14 @@ export class ModbusError extends Error {}
  * send is a question for the device, not for the protocol — see the note in
  * registers.js, where the answer is kept in one place.
  */
-export function buildReadRequest(address, count, unitId = DEFAULT_UNIT_ID) {
+export function buildReadRequest(address, count, unitId = DEFAULT_UNIT_ID, functionCode = FUNC_READ) {
   const frame = new Uint8Array(12);
   const view = new DataView(frame.buffer);
   view.setUint16(0, 0); // transaction id
   view.setUint16(2, 0); // protocol id
   view.setUint16(4, 6); // length: unit + function + 4 payload bytes
   frame[6] = unitId;
-  frame[7] = FUNC_READ;
+  frame[7] = functionCode;
   view.setUint16(8, address);
   view.setUint16(10, count);
   return frame;
@@ -93,11 +95,11 @@ export function buildWriteRequest(address, value, unitId = DEFAULT_UNIT_ID) {
  * negative number in a 16-bit view. Callers that need the unsigned reading use
  * `toUint16` rather than reading the raw array themselves.
  */
-export function parseReadAnswer(bytes, address, count) {
+export function parseReadAnswer(bytes, address, count, functionCode = FUNC_READ) {
   if (bytes.length < 9) throw new ModbusError('Answer too short to be a Modbus frame');
   if (bytes[7] & 0x80) throw new ModbusError(`Modbus exception ${bytes[8]} for ${address}`);
-  if (bytes[7] !== FUNC_READ) {
-    throw new ModbusError(`Expected function ${FUNC_READ}, got ${bytes[7]} for ${address}`);
+  if (bytes[7] !== functionCode) {
+    throw new ModbusError(`Expected function ${functionCode}, got ${bytes[7]} for ${address}`);
   }
   const byteCount = bytes[8];
   if (byteCount !== count * 2) {
@@ -208,6 +210,18 @@ export class VestelModbus {
       return parseReadAnswer(bytes, address, count);
     } catch (err) {
       throw new ModbusError(`${err.message} (asked for ${address}x${count})`);
+    }
+  }
+
+  /** Read one writable holding register (function 0x03) as an unsigned 16-bit number. */
+  async readHoldingUint16(address) {
+    const frame = buildReadRequest(address, 1, this.unitId, FUNC_READ_HOLDING);
+    try {
+      const bytes = await this.transport.request(frame);
+      const [value] = parseReadAnswer(bytes, address, 1, FUNC_READ_HOLDING);
+      return toUint16(value);
+    } catch (err) {
+      throw new ModbusError(`${err.message} (reading holding register ${address})`);
     }
   }
 
