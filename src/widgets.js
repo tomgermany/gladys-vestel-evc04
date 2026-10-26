@@ -268,7 +268,11 @@ export function chargerAction({
       const ceiling = Number(limits?.max);
       const max = Number.isFinite(ceiling) ? Math.max(min, ceiling) : Infinity;
       const next = Math.min(max, Math.max(min, Math.round(base + delta)));
-      return { key: CURRENT_READING, current: next, toast: t('control', next) };
+      // `t()` returns the translated value; parameterised labels such as `control`
+      // are functions and must be called explicitly before Gladys receives the toast.
+      const controlMessage = t('control');
+      const toast = typeof controlMessage === 'function' ? controlMessage(next) : controlMessage;
+      return { key: CURRENT_READING, current: next, toast };
     }
     default:
       throw new Error(`Unknown widget action: ${actionKey}`);
