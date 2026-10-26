@@ -61,7 +61,6 @@ import {
   DEVICE_FEATURE_UNITS as UNIT,
   createLogger,
 } from '@gladysassistant/integration-sdk';
-import { DEFAULT_MIN_CURRENT, DEFAULT_MAX_CURRENT } from '../vestel/registers.js';
 import { Evc04Client } from '../vestel/client.js';
 import { cableSentence, deviceSentence } from '../labels.js';
 
