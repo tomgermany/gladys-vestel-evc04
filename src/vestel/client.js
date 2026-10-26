@@ -106,6 +106,14 @@ export class Evc04Client extends VestelModbus {
       }
     }
 
+    // The measured total is the sum of the three phase currents. Keep it in
+    // amperes with its fractional part in the snapshot; the device/widget layer
+    // rounds only the published display value to whole amperes.
+    const phaseKeys = ['current_l1', 'current_l2', 'current_l3'];
+    if (phaseKeys.every((key) => Number.isFinite(snapshot[key]))) {
+      snapshot.total_current = phaseKeys.reduce((sum, key) => sum + snapshot[key], 0) / 1000;
+    }
+
     // Temporary, read-only diagnosis for the reported 0 A session-current issue.
     // These are the unscaled values from this SAME poll, so we can compare the
     // session report with all phases and total power without changing Gladys data.
@@ -116,6 +124,7 @@ export class Evc04Client extends VestelModbus {
         `1008 current_l1=${raw('current_l1')} (mA); ` +
         `1010 current_l2=${raw('current_l2')} (mA); ` +
         `1012 current_l3=${raw('current_l3')} (mA); ` +
+        `total_current=${raw('total_current')} (A); ` +
         `1020-1021 power=${raw('power')} (W)`,
     );
 
