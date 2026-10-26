@@ -162,7 +162,7 @@ async function establish() {
 
   // Preserve the last requested current, but pause heartbeat writes while the
   // old socket is being released and the new connection is initialized.
-  const requestedCurrent = control.active ? control.current : DEFAULT_MIN_CURRENT;
+  const requestedCurrent = control.active && sameTarget ? control.current : DEFAULT_MIN_CURRENT;
   control.stop();
 
   if (client) {
@@ -200,9 +200,10 @@ async function establish() {
     // every new TCP master connection. Write them one at a time and pause briefly
     // between acknowledged writes so the wallbox can process each change calmly.
     const failsafeCurrent = control.failsafeCurrent();
-    const failsafeTimeout = Number.isInteger(config.failsafe_timeout) && config.failsafe_timeout > 0
-      ? config.failsafe_timeout
-      : DEFAULT_FAILSAFE_TIMEOUT_S;
+    const failsafeTimeout =
+      Number.isInteger(config.failsafe_timeout) && config.failsafe_timeout > 0
+        ? config.failsafe_timeout
+        : DEFAULT_FAILSAFE_TIMEOUT_S;
     await connection.writeRegister(FAILSAFE.current, failsafeCurrent);
     await wait(250);
     await connection.writeRegister(FAILSAFE.timeout, failsafeTimeout);
