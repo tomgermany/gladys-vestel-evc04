@@ -128,6 +128,16 @@ async function applySetpoint(connection, current) {
   await connection.writeRegister(FAILSAFE.current, failsafeCurrent);
   await connection.writeRegister(FAILSAFE.timeout, failsafeTimeout);
   await connection.writeRegister(CONTROL.charging_current, current);
+  // A write echo confirms the request frame, not the value retained by the EVSE.
+  // Read the writable holding register back (function 0x03) for an independent check.
+  try {
+    const actual = await connection.readHoldingUint16(CONTROL.charging_current);
+    logger.info(
+      `Setpoint register readback: register ${CONTROL.charging_current}, requested=${current} A, actual=${actual} A, match=${actual === current}`,
+    );
+  } catch (err) {
+    logger.warn(`Setpoint register readback unavailable: ${err.message}`);
+  }
   await wait(500);
   control.set(current);
   logger.info(
