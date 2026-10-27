@@ -196,10 +196,11 @@ export class Evc04Client extends VestelModbus {
       this.readOptionalUint16(READ_ONLY.session_max_current).catch(() => null),
     ]);
     const floor = DEFAULT_MIN_CURRENT;
+    const valid = (v) => (Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_CURRENT);
     const ceiling = Math.min(
-      evseMax ?? DEFAULT_MAX_CURRENT,
-      cableMax ?? DEFAULT_MAX_CURRENT,
-      sessionMax ?? DEFAULT_MAX_CURRENT,
+      valid(evseMax),
+      valid(cableMax),
+      valid(sessionMax),
       DEFAULT_MAX_CURRENT,
     );
     this.limits = { min: floor, max: Math.max(floor, ceiling), reportedMin: min };
