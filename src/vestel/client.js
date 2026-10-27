@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // The wallbox as one Gladys device, wrapping raw registers into named readings
 // and the commands that go back the other way.
 //
