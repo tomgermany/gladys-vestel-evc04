@@ -391,9 +391,21 @@ test('measured phase current is the fallback when register 1500 reports zero', (
   const intent = chargerAction({
     actionKey: ACTION.CURRENT_UP,
     params: { step: 1 },
-    state: { charging_current: 0, total_current: 6.079 },
+    state: { charging_current: 0, current_l1: 9200, current_l2: 18, current_l3: 18 },
   });
-  assert.equal(intent.current, 7);
+  // 9.2 A measured on the strongest phase, plus one ampere. A fall back to the
+  // 6 A floor would give 7.
+  assert.equal(intent.current, 10);
+});
+
+test('the sum of the phases is not the base of a tap', () => {
+  const intent = chargerAction({
+    actionKey: ACTION.CURRENT_DOWN,
+    params: { step: 1 },
+    state: { charging_current: 0, current_l1: 16000, current_l2: 16000, current_l3: 16000 },
+    limits: { min: 6, max: 16 },
+  });
+  assert.equal(intent.current, 15);
 });
 
 test('a tap on − moves the current down and stops at the floor', () => {
