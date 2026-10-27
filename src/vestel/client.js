@@ -219,33 +219,12 @@ export class Evc04Client extends VestelModbus {
       this.readOptionalUint16(READ_ONLY.session_max_current).catch(() => null),
     ]);
     const floor = DEFAULT_MIN_CURRENT;
-    // A register that answers 0 (or nothing) is "not reported", not a limit of 0 A:
-    // the device answers 0 for the session and cable maximum when no session is
-    // running or no cable is detected. Only a positive value may lower the ceiling.
     const valid = (v) => (Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_CURRENT);
-        // The session maximum (1100) is deliberately NOT part of the ceiling: it describes
-    // what the running session negotiated, can be small while a car draws little, and
-    // these limits are read only on connect, so it would pin the range until the next
-    // reconnect. It stays in the diagnostic below.
-    const ceiling = Math.min(valid(evseMax), valid(cableMax), DEFAULT_MAX_CURRENT);
-    this.limits = {
-      min: floor,
-      max: Math.max(floor, ceiling),
-      reportedMin: min,
-      evseMax,
-      cableMax,
-    };
-
-    // Temporary, read-only diagnosis: show exactly which register narrows the
-    // allowed setpoint range. This is essential when the installer configured
-    // 6-16 A in the web interface but the integration calculates 6-6 A.
-    this.diagnostic?.(
-      'Current-limit diagnostic (raw register values, A): ' +
-        `1102 evse_min=${min ?? 'not available'}; ` +
-        `1104 evse_max=${evseMax ?? 'not available'}; ` +
-        `1106 cable_max=${cableMax ?? 'not available'}; ` +
-        `1100 session_max=${sessionMax ?? 'not available'}; ` +
-        `effective_range=${this.limits.min}-${this.limits.max} A`,
+    const ceiling = Math.min(
+      valid(evseMax),
+      valid(cableMax),
+      valid(sessionMax),
+      DEFAULT_MAX_CURRENT,
     );
     return this.limits;
   }
