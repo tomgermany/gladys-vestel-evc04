@@ -201,11 +201,11 @@ export class Evc04Client extends VestelModbus {
    * and this integration respects them: the question they answer is "how much may I
    * ask for", not "how much do I want".
    *
-   * THREE VALUES DECIDE THE CEILING, AND THE SMALLEST WINS
-   * `1104` is the device, `1106` the cable plugged into it, and `1100` the maximum
-   * of the session that is running — a vehicle may ask for less than either. The
-   * ceiling is the smallest of the three, so a setpoint can never be reported as
-   * accepted while the car draws less.
+    * TWO VALUES DECIDE THE CEILING, AND THE SMALLEST WINS
+   * `1104` is the device and `1106` the cable plugged into it. A register that answers
+   * 0 is "not reported" and does not lower the ceiling. `1100` (the session maximum)
+   * is read for the diagnostic only: it changes during a session while the limits are
+   * read once on connect.
    *
    * The floor is 6 A whatever `1102` says: on this device that register answers 0,
    * which is a setpoint the wallbox refuses and no vehicle accepts. The figure
