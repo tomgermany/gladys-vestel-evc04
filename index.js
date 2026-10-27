@@ -119,7 +119,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * current, then start the heartbeat. A normal connection or read never calls this.
  */
 async function applySetpoint(connection, current) {
-  const failsafeCurrent = control.failsafeCurrent();
+  const failsafeCurrent = Math.min(control.failsafeCurrent(), connection.getLimits().max);
   const failsafeTimeout =
     Number.isInteger(config.failsafe_timeout) && config.failsafe_timeout > 0
       ? config.failsafe_timeout
