@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // The wallbox as one Gladys device, wrapping raw registers into named readings
 // and the commands that go back the other way.
 //
@@ -105,6 +105,29 @@ export class Evc04Client extends VestelModbus {
         this.warn?.(entry.key, err);
       }
     }
+
+    // The measured total is the sum of the three phase currents. Keep it in
+    // amperes with its fractional part in the snapshot; the device/widget layer
+    // rounds only the published display value to whole amperes.
+    const phaseKeys = ['current_l1', 'current_l2', 'current_l3'];
+    if (phaseKeys.every((key) => Number.isFinite(snapshot[key]))) {
+      snapshot.total_current = phaseKeys.reduce((sum, key) => sum + snapshot[key], 0) / 1000;
+    }
+
+    // Temporary, read-only diagnosis for the reported 0 A session-current issue.
+    // These are the unscaled values from this SAME poll, so we can compare the
+    // session report with all phases and total power without changing Gladys data.
+    const raw = (key) => snapshot[key] ?? 'not available';
+    this.diagnostic?.(
+      'Charging diagnostic (raw register values): ' +
+        `1500 charging_current=${raw('charging_current')} (0.1 A); ` +
+        `1008 current_l1=${raw('current_l1')} (mA); ` +
+        `1010 current_l2=${raw('current_l2')} (mA); ` +
+        `1012 current_l3=${raw('current_l3')} (mA); ` +
+        `total_current=${raw('total_current')} (A); ` +
+        `1020-1021 power=${raw('power')} (W)`,
+    );
+
     return snapshot;
   }
 
@@ -178,11 +201,11 @@ export class Evc04Client extends VestelModbus {
    * and this integration respects them: the question they answer is "how much may I
    * ask for", not "how much do I want".
    *
-   * THREE VALUES DECIDE THE CEILING, AND THE SMALLEST WINS
-   * `1104` is the device, `1106` the cable plugged into it, and `1100` the maximum
-   * of the session that is running — a vehicle may ask for less than either. The
-   * ceiling is the smallest of the three, so a setpoint can never be reported as
-   * accepted while the car draws less.
+    * TWO VALUES DECIDE THE CEILING, AND THE SMALLEST WINS
+   * `1104` is the device and `1106` the cable plugged into it. A register that answers
+   * 0 is "not reported" and does not lower the ceiling. `1100` (the session maximum)
+   * is read for the diagnostic only: it changes during a session while the limits are
+   * read once on connect.
    *
    * The floor is 6 A whatever `1102` says: on this device that register answers 0,
    * which is a setpoint the wallbox refuses and no vehicle accepts. The figure
@@ -203,7 +226,6 @@ export class Evc04Client extends VestelModbus {
       valid(sessionMax),
       DEFAULT_MAX_CURRENT,
     );
-    this.limits = { min: floor, max: Math.max(floor, ceiling), reportedMin: min };
     return this.limits;
   }
 

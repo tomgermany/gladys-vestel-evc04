@@ -35,8 +35,8 @@
 //
 // WHAT THE CARD SHOWS
 //   - the state as ONE sentence, in a status row: "Ich lade aktuell mit 11 kW."
-//   - the charging current as a value tile, bound to the feature this integration
-//     publishes, so it follows the history without a refresh being wired here.
+//   - the measured total charging current as a value tile, bound to its own
+//     feature, so it follows the history without a refresh being wired here.
 //   - two buttons which move the setpoint inside what the device and its cable
 //     allow, by the step the widget's settings ask for.
 //
@@ -126,23 +126,26 @@ export function currentLabel(t, current) {
 }
 
 /**
- * The snapshot key the current buttons move, and the one the tile shows.
+ * The snapshot key the current buttons use as their fallback base.
  *
- * One name in one place: the poll plan, the device builder and the buttons all
- * speak about the same reading, and a second spelling of it is a second place to
- * be wrong.
+ * This remains separate from TOTAL_CURRENT_READING: the measured phase sum is a
+ * display value, while these buttons change the per-phase charging-current setpoint.
  */
 export const CURRENT_READING = 'charging_current';
+
+/** The separately measured sum of the three phase currents, in whole amperes on display. */
+export const TOTAL_CURRENT_READING = 'total_current';
 
 /**
  * @param {object} ctx
  * @param {object|null} ctx.state the last reading snapshot
  * @param {object|null} ctx.device { name, serial, model, host }
- * @param {object} ctx.ids { charging_current } external id of the published feature
+ * @param {object} ctx.ids { total_current, cable_state } external ids of published features
  * @param {number|false|null} ctx.controlled the charging current we have set
  * @param {object} ctx.settings the widget instance settings, see stepFromSettings
  * @param {Function} ctx.t labels, per language
  * @param {Function} ctx.sentence the state as one sentence
+ * @param {Function} ctx.cableSentence the cable state as a readable sentence
  */
 export function buildChargerContent({
   state,
@@ -152,6 +155,8 @@ export function buildChargerContent({
   settings = {},
   t = (key) => key,
   sentence = () => '',
+  cableSentence = () => '',
+  limits = null,
 }) {
   if (!state || !device) {
     return {
@@ -173,17 +178,29 @@ export function buildChargerContent({
         value: sentence(state),
         color: stateColor(state),
       },
+      ...(ids.cable_state
+        ? [{ label: t('cable'), icon: 'plug', value: cableSentence(state) }]
+        : []),
+      ...(Number(limits?.evseMax) > 0 &&
+      Number(limits?.cableMax) > 0 &&
+      Number(limits.cableMax) < Number(limits.evseMax)
+        ? [{
+            label: t('current_limit'),
+            icon: 'info',
+            value: t('cable_limit')(Number(limits.cableMax), Number(limits.evseMax)),
+          }]
+        : []),
     ],
   });
 
-  // 2. The charging current, as a tile bound to its own feature: it follows the
-  //    published states, so nothing has to be refreshed here.
-  if (ids.charging_current) {
+  // 2. The measured total current, as a tile bound to its own feature. The sum is
+  //    rounded to whole amperes before publication; the control setpoint is separate.
+  if (ids.total_current) {
     components.push({
       type: 'value',
-      label: currentLabel(t, controlled),
+      label: t('current_total'),
       icon: 'plug',
-      device_feature: ids.charging_current,
+      device_feature: ids.total_current,
       unit: 'A',
       color: hasControl(controlled) ? 'info' : 'neutral',
     });
@@ -232,6 +249,18 @@ function stateColor(state) {
 }
 
 /**
+ * The highest measured phase current in amperes, or null when no phase carries
+ * current. The setpoint applies PER PHASE, so the sum of the phases is the wrong
+ * base for a tap: three phases at 16 A each sum to 48 A.
+ */
+function perPhaseAmps(state) {
+  const phases = ['current_l1', 'current_l2', 'current_l3']
+    .map((key) => Number(state?.[key]))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return phases.length ? Math.max(...phases) / 1000 : null;
+}
+
+/**
  * Work out what a tapped button means, without doing it.
  *
  * The widget returns an intention; the caller applies it, because the caller owns
@@ -254,6 +283,7 @@ export function chargerAction({
   params,
   state,
   limits,
+  controlled = null,
   t = (key) => key,
 }) {
   switch (actionKey) {
@@ -261,12 +291,18 @@ export function chargerAction({
     case ACTION.CURRENT_UP: {
       const step = Number(params?.step ?? CURRENT_STEP);
       const delta = actionKey === ACTION.CURRENT_UP ? step : -step;
-      const base = amps(state?.[CURRENT_READING]);
+      const base = hasControl(controlled)
+        ? amps(controlled)
+        : (perPhaseAmps(state) ?? amps(state?.[CURRENT_READING]));
       const min = Math.max(MIN_CURRENT, Number(limits?.min) || MIN_CURRENT);
       const ceiling = Number(limits?.max);
       const max = Number.isFinite(ceiling) ? Math.max(min, ceiling) : Infinity;
       const next = Math.min(max, Math.max(min, Math.round(base + delta)));
-      return { key: CURRENT_READING, current: next, toast: t('control', next) };
+      // `t()` returns the translated value; parameterised labels such as `control`
+      // are functions and must be called explicitly before Gladys receives the toast.
+      const controlMessage = t('control');
+      const toast = typeof controlMessage === 'function' ? controlMessage(next) : controlMessage;
+      return { key: CURRENT_READING, current: next, toast };
     }
     default:
       throw new Error(`Unknown widget action: ${actionKey}`);

@@ -61,7 +61,6 @@ import {
   DEVICE_FEATURE_UNITS as UNIT,
   createLogger,
 } from '@gladysassistant/integration-sdk';
-import { DEFAULT_MIN_CURRENT, DEFAULT_MAX_CURRENT } from '../vestel/registers.js';
 import { Evc04Client } from '../vestel/client.js';
 import { cableSentence, deviceSentence } from '../labels.js';
 
@@ -137,6 +136,18 @@ export const FEATURES = [
   },
 
   // --- The live electrical reading ---
+  {
+    key: 'total_current',
+    name: 'Ladestrom gesamt',
+    source: 'total_current',
+    as: 'number',
+    category: CAT_ENERGY,
+    type: CURRENT,
+    unit: UNIT.AMPERE,
+    // The snapshot keeps the precise sum; Gladys displays whole amperes.
+    scale: 1,
+    writable: false,
+  },
   {
     key: 'power',
     name: 'Ladeleistung',
@@ -266,28 +277,10 @@ export const FEATURES = [
     writable: false,
   },
 
-  // --- The control ---
-  // The charging current is the only value this integration steers, because it is
-  // the only thing the device can be told. It overrides what the wallbox would do on
-  // its own, and the heartbeat in src/alive.js is what keeps it in force.
-  //
-  // The source is the DEVICE'S REPORT (register 1500, tenths of an ampere), not the
-  // setpoint we wrote: the tile therefore shows what is really there.
-  {
-    key: 'charging_current',
-    name: 'Ladestrom',
-    source: 'charging_current',
-    as: 'number',
-    category: CAT_ENERGY,
-    type: CURRENT,
-    unit: UNIT.AMPERE,
-    // Register 1500 counts tenths of an ampere: 130 is 13 A.
-    scale: 1 / 10,
-    min: DEFAULT_MIN_CURRENT,
-    max: DEFAULT_MAX_CURRENT,
-    bounds: true,
-    writable: true,
-  },
+  // The setpoint is kept as an internal snapshot value for the widget's +/−
+  // buttons, but is not published as a device feature. Register 1500 reports 0 A
+  // on this wallbox, so showing it as a second "Ladestrom" property is misleading.
+
 ];
 
 /**
@@ -347,6 +340,9 @@ export function featureValue(feature, snapshot) {
 
   const raw = Evc04Client.reading(snapshot, feature.source);
   if (raw === null || raw === undefined) return null;
+  // The total is calculated precisely from all phases in the client, but the
+  // displayed Gladys feature is intentionally a whole number of amperes.
+  if (feature.source === 'total_current') return Math.round(raw);
   if (feature.scale === undefined || feature.scale === 1) return raw;
   return Math.round(raw * feature.scale * 10000) / 10000;
 }

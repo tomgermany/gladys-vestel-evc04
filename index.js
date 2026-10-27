@@ -43,7 +43,7 @@ import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 
 import { DEFAULT_CONFIG, normalizeConfig } from './src/config.js';
 import { Evc04Client } from './src/vestel/client.js';
-import { AliveControl } from './src/alive.js';
+import { AliveControl, DEFAULT_FAILSAFE_TIMEOUT_S } from './src/alive.js';
 import {
   buildDevice,
   deviceExternalId,
@@ -59,11 +59,11 @@ import {
   CHARGER_WIDGET,
   buildChargerContent,
   chargerAction,
-  CURRENT_READING,
+  TOTAL_CURRENT_READING,
 } from './src/widgets.js';
 import { SCENE_ACTIONS, chargingEvents } from './src/scenes.js';
-import { t, deviceSentence } from './src/labels.js';
-import { CONTROL } from './src/vestel/registers.js';
+import { t, deviceSentence, cableSentence } from './src/labels.js';
+import { CONTROL, FAILSAFE } from './src/vestel/registers.js';
 
 const gladys = new GladysIntegration();
 
@@ -75,13 +75,31 @@ let device = null; // { host, serial, model, name }: the identity of the wallbox
 let lastRead = 0; // when the readings were taken, to honour the configured interval
 let previousCharging = null; // the last charging flank, see chargingEvents()
 let connecting = null; // the connect attempt running right now, or null
+let modbusTraceUntil = 0; // short wire-level trace window opened by a widget tap
+let modbusQueue = Promise.resolve(); // one whole operation at a time on the single-master connection
+
+/**
+ * Serialize complete Modbus operations, not just individual request/response frames.
+ * A setpoint consists of several writes; a poll or heartbeat must not slip between
+ * them. Failed operations do not poison the queue.
+ */
+function serializeModbus(task) {
+  const result = modbusQueue.then(task, task);
+  modbusQueue = result.catch(() => {});
+  return result;
+}
+
+function traceModbus(message) {
+  if (Date.now() <= modbusTraceUntil) logger.info(`MODBUS TRACE ${message}`);
+}
 
 /** The heartbeat. Its `write` runs on whatever connection is current. */
 const control = new AliveControl({
-  write: (register, value) => {
-    if (!client) throw new Error('Keine Verbindung zur Wallbox');
-    return client.writeRegister(register, value);
-  },
+  write: (register, value) =>
+    serializeModbus(() => {
+      if (!client) throw new Error('Keine Verbindung zur Wallbox');
+      return client.writeRegister(register, value);
+    }),
   log: (message) => logger.warn(message),
 });
 
@@ -91,6 +109,56 @@ const NO_HOST = {
   fr: "Indiquez l'adresse de la borne dans la configuration.",
   es: 'Introduce la direcci\u00f3n del cargador en la configuraci\u00f3n.',
 };
+
+/** Small, deliberate pause between control writes; the wallbox is not rushed. */
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Take control only after an explicit setpoint request.
+ * Apply the documented sequence: failsafe current, failsafe timeout, dynamic
+ * current, then start the heartbeat. A normal connection or read never calls this.
+ */
+async function applySetpoint(connection, current) {
+  const failsafeCurrent = Math.min(control.failsafeCurrent(), connection.getLimits().max);
+  const failsafeTimeout =
+    Number.isInteger(config.failsafe_timeout) && config.failsafe_timeout > 0
+      ? config.failsafe_timeout
+      : DEFAULT_FAILSAFE_TIMEOUT_S;
+
+  // The failsafe registers are persistent configuration of the wallbox, not part of
+  // a setpoint: read them first and write only when they differ. A register that
+  // cannot be read is written, so a refused read never leaves it unchecked.
+  const ensureRegister = async (register, wanted) => {
+    let actual = null;
+    try {
+      actual = await connection.readHoldingUint16(register);
+    } catch (err) {
+      logger.warn(`Register ${register} not readable (${err.message}), writing it`);
+    }
+    if (actual !== wanted) {
+      await connection.writeRegister(register, wanted);
+      logger.info(`Register ${register}: ${actual ?? 'unreadable'} -> ${wanted}`);
+    }
+  };
+  await ensureRegister(FAILSAFE.current, failsafeCurrent);
+  await ensureRegister(FAILSAFE.timeout, failsafeTimeout);
+  await connection.writeRegister(CONTROL.charging_current, current);
+  // A write echo confirms the request frame, not the value retained by the EVSE.
+  // Read the writable holding register back (function 0x03) for an independent check.
+  try {
+    const actual = await connection.readHoldingUint16(CONTROL.charging_current);
+    logger.info(
+      `Setpoint register readback: register ${CONTROL.charging_current}, requested=${current} A, actual=${actual} A, match=${actual === current}`,
+    );
+  } catch (err) {
+    logger.warn(`Setpoint register readback unavailable: ${err.message}`);
+  }
+  await wait(500);
+  control.set(current);
+  logger.info(
+    `Control enabled by explicit request: failsafe=${failsafeCurrent} A, timeout=${failsafeTimeout} s, setpoint=${current} A`,
+  );
+}
 
 /** Read the configuration Gladys holds into `config`. */
 async function readConfig() {
@@ -137,34 +205,44 @@ async function connectDevice() {
  */
 async function establish() {
   const sameTarget = Boolean(
-    client && device && device.host === config.host && client.port === config.modbus_port,
+    device &&
+      device.host === config.host &&
+      (device.modbusPort ?? client?.port ?? config.modbus_port) === config.modbus_port,
   );
   if (client?.transport?.isOpen && sameTarget) {
-    state = await client.readAll().catch((err) => {
+    const readings = await client.readAll().catch((err) => {
       logger.warn(`Refresh on the existing connection failed: ${err.message}`);
-      return state;
+      return null;
     });
+    if (readings) state = { ...(state ?? {}), ...readings };
     lastRead = Date.now();
     await gladys.setConnectionStatus(true);
     return true;
   }
 
+  // A fresh connection starts read-only. Do not carry control over implicitly:
+  // any takeover must be an explicit user/scene/widget command.
+  control.clear();
+
   if (client) {
     await client.transport?.close?.().catch(() => {});
     client = null;
   }
-  state = null;
-  device = null;
-  previousCharging = null;
-  control.clear();
+  if (!sameTarget) {
+    state = null;
+    device = null;
+    previousCharging = null;
+    control.clear();
+  }
 
   if (!config.host) {
     await gladys.setConnectionStatus(false, NO_HOST);
     return false;
   }
 
+  let connection = null;
   try {
-    const connection = new Evc04Client({
+    connection = new Evc04Client({
       host: config.host,
       port: config.modbus_port,
       unitId: config.unit_id,
@@ -175,10 +253,16 @@ async function establish() {
     // Keeping it at info level makes the temporary diagnostic visible without
     // incorrectly classifying a valid register response as a warning.
     connection.diagnostic = (message) => logger.info(message);
+    connection.transport.trace = (message) => traceModbus(message);
     const info = await connection.connect();
+
+    // Connecting, identifying and scanning are strictly read-only. The
+    // control registers are initialized only by applySetpoint(), after an explicit
+    // setpoint command from the user, widget or scene.
 
     device = {
       host: config.host,
+      modbusPort: config.modbus_port,
       serial: info.serial,
       model: info.model,
       firmware: info.firmware,
@@ -188,7 +272,8 @@ async function establish() {
 
     const limits = await client.readLimits().catch(() => null);
     device.limits = limits;
-    state = await client.readAll();
+    const readings = await client.readAll();
+    state = { ...(sameTarget ? state ?? {} : {}), ...readings };
     lastRead = Date.now();
     logger.info(
       `Wallbox ready: ${device.serial || 'no serial'}, firmware ${info.firmware || 'unknown'}, ` +
@@ -201,8 +286,9 @@ async function establish() {
   } catch (err) {
     // A failed attempt must not leave a half-open socket behind: this device allows
     // one master, and a stranded socket would block the next attempt.
-    client?.transport?.reset();
-    client = null;
+    await connection?.transport?.close?.().catch(() => {});
+    connection?.transport?.reset();
+    if (client === connection) client = null;
     logger.error(`Wallbox connection failed (${config.host}): ${err.message}`);
     await gladys
       .setConnectionStatus(false, {
@@ -229,21 +315,26 @@ async function establish() {
  * connection" — the symptom, not the cause. The first error is attached as `cause`,
  * so a reader of the log sees what was tried and why it broke.
  */
-async function withConnection(task) {
-  if (!client) {
-    if (!(await connectDevice())) throw new Error('Keine Verbindung zur Wallbox');
-  }
-  try {
-    return await task(client);
-  } catch (err) {
-    logger.warn(`Read failed (${err.message}) -> one retry on a fresh connection`);
-    client?.transport?.reset();
-    client = null;
-    if (!(await connectDevice())) {
-      throw new Error('Keine Verbindung zur Wallbox nach einem zweiten Versuch', { cause: err });
+async function withConnection(task, { retry = true } = {}) {
+  return serializeModbus(async () => {
+    if (!client) {
+      if (!(await connectDevice())) throw new Error('Keine Verbindung zur Wallbox');
     }
-    return await task(client);
-  }
+    try {
+      return await task(client);
+    } catch (err) {
+      // Never replay a write sequence after a partial failure: earlier writes may
+      // already have reached the wallbox. Only read-only tasks may use this retry.
+      if (!retry) throw err;
+      logger.warn(`Read failed (${err.message}) -> one retry on a fresh connection`);
+      await client?.transport?.close?.().catch(() => {});
+      client = null;
+      if (!(await connectDevice())) {
+        throw new Error('Keine Verbindung zur Wallbox nach einem zweiten Versuch', { cause: err });
+      }
+      return await task(client);
+    }
+  });
 }
 
 /**
@@ -276,19 +367,22 @@ async function publishDevice() {
  * the session that just started rather than the one before it.
  */
 async function refresh() {
-  if (!client) return;
-  state = await client.readAll();
-  lastRead = Date.now();
+  return serializeModbus(async () => {
+    if (!client) return;
+    const readings = await client.readAll();
+    state = { ...(state ?? {}), ...readings };
+    lastRead = Date.now();
 
-  const { events, side } = chargingEvents({ snapshot: state, previous: previousCharging });
-  previousCharging = side;
-  for (const event of events) {
-    await gladys
-      .publishSceneEvent(event.key, event.data)
-      .catch((err) => logger.error('publishSceneEvent failed', err.message));
-  }
+    const { events, side } = chargingEvents({ snapshot: state, previous: previousCharging });
+    previousCharging = side;
+    for (const event of events) {
+      await gladys
+        .publishSceneEvent(event.key, event.data)
+        .catch((err) => logger.error('publishSceneEvent failed', err.message));
+    }
 
-  await publishAll(gladys, device, state);
+    await publishAll(gladys, device, state);
+  });
 }
 
 /** The external id of one feature of this device, or null before the first read. */
@@ -298,14 +392,16 @@ function featureId(key) {
 }
 
 // --- Discovery ---------------------------------------------------------------
-gladys.onScanRequest(async () => {
-  logger.info('onScanRequest -> called by Gladys');
-  if (!client && !(await connectDevice())) {
-    logger.warn('onScanRequest -> no wallbox, nothing published');
-    return;
-  }
-  await publishDevice();
-});
+gladys.onScanRequest(async () =>
+  serializeModbus(async () => {
+    logger.info('onScanRequest -> called by Gladys');
+    if (!client && !(await connectDevice())) {
+      logger.warn('onScanRequest -> no wallbox, nothing published');
+      return;
+    }
+    await publishDevice();
+  }),
+);
 
 // --- Polling -----------------------------------------------------------------
 // Gladys ticks a polled device once a minute at most; the interval the user chose
@@ -327,13 +423,14 @@ gladys.onSetValue(async (dev, feature, value) => {
   const wanted = Number(value);
   if (!Number.isFinite(wanted)) throw new Error('Der Ladestrom muss eine Zahl sein');
 
-  await withConnection(async (connection) => {
-    const limits = connection.getLimits();
-    const current = Math.min(limits.max, Math.max(limits.min, Math.round(wanted)));
-    await connection.writeRegister(CONTROL.charging_current, current);
-    control.set(current);
-    logger.info(`Setpoint ${current} A written to register 5004`);
-  });
+  await withConnection(
+    async (connection) => {
+      const limits = connection.getLimits();
+      const current = Math.min(limits.max, Math.max(limits.min, Math.round(wanted)));
+      await applySetpoint(connection, current);
+    },
+    { retry: false },
+  );
   await refresh().catch(() => {});
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
 });
@@ -346,10 +443,21 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
   return buildChargerContent({
     state,
     device,
-    ids: { charging_current: featureId(CURRENT_READING) },
+    ids: {
+      total_current:
+        Number.isFinite(Evc04Client.reading(state, TOTAL_CURRENT_READING))
+          ? featureId(TOTAL_CURRENT_READING)
+          : null,
+      cable_state:
+        Evc04Client.stateWord(state, 'cable_state') !== null
+          ? featureId('cable_state')
+          : null,
+    },
     controlled: control.active ? control.current : null,
+    limits: client?.getLimits?.() ?? null,
     settings,
     t,
+    cableSentence: (snapshot) => cableSentence(snapshot?.cable_state),
     sentence: (snapshot) =>
       deviceSentence({
         word: Evc04Client.stateWord(snapshot, 'chargepoint_state'),
@@ -368,30 +476,66 @@ gladys.onWidgetGet(CHARGER_WIDGET, async (settings = {}) => {
  * limits the DEVICE reported, not against a constant.
  */
 gladys.onWidgetAction(CHARGER_WIDGET, async (actionKey, params) => {
+  // Capture every raw Modbus TCP frame and socket error for 20 seconds. This includes
+  // the setpoint write, its device echo, the follow-up reads, and heartbeat traffic.
+  modbusTraceUntil = Date.now() + 20000;
+  logger.info('MODBUS TRACE window opened for 20 seconds after widget action');
+  logger.info(
+    `Widget action received: key=${String(actionKey)}, params=${JSON.stringify(params ?? {})}`,
+  );
   const intent = chargerAction({
     actionKey,
     params,
     state,
     limits: client?.getLimits(),
+    controlled: control.active ? control.current : null,
     t,
   });
-  await withConnection(async (connection) => {
-    await connection.writeRegister(CONTROL.charging_current, intent.current);
+  logger.info(
+    `Widget setpoint calculated: action=${String(actionKey)}, target=${intent.current} A, ` +
+      `limits=${JSON.stringify(client?.getLimits?.() ?? null)}, ` +
+      `measured_total=${state?.total_current ?? '?'}, register_1500=${state?.charging_current ?? '?'}`,
+  );
+  await withConnection(
+    async (connection) => {
+      logger.info(`Widget setpoint write starting: register ${CONTROL.charging_current}, value=${intent.current} A`);
+      try {
+        await applySetpoint(connection, intent.current);
+        logger.info(`Widget setpoint write confirmed: register ${CONTROL.charging_current}, value=${intent.current} A`);
+      } catch (err) {
+        logger.error(
+          `Widget setpoint write failed: register ${CONTROL.charging_current}, value=${intent.current} A: ${err.message}`,
+        );
+        throw err;
+      }
+    },
+    { retry: false },
+  );
+  await refresh().catch((err) => {
+    logger.warn(`Widget setpoint readback failed: ${err.message}`);
   });
-  control.set(intent.current);
-  await refresh().catch(() => {});
+  logger.info(
+    `Widget setpoint readback: requested=${intent.current} A, ` +
+      `register_1500=${state?.charging_current ?? '?'}, ` +
+      `total_current=${state?.total_current ?? '?' } A, power=${state?.power ?? '?'} W`,
+  );
   gladys.requestWidgetRefresh(CHARGER_WIDGET);
   return intent.toast;
 });
 
 /** The one scene action: set the charging current, with the heartbeat kept alive. */
 gladys.onSceneAction('set_charging_current', async (fields) => {
-  return SCENE_ACTIONS.set_charging_current({
-    client,
-    fields,
-    control,
-    connect: connectDevice,
-  });
+  return withConnection(
+    (connection) =>
+      SCENE_ACTIONS.set_charging_current({
+        client: connection,
+        fields,
+        control,
+        applySetpoint,
+        connect: connectDevice,
+      }),
+    { retry: false },
+  );
 });
 
 /**
@@ -424,26 +568,30 @@ gladys.onAction('test_connection', async () => {
 });
 
 // --- Connection lifecycle ----------------------------------------------------
-gladys.on('connected', async () => {
-  try {
-    await readConfig();
+gladys.on('connected', async () =>
+  serializeModbus(async () => {
+    try {
+      await readConfig();
+      if (await connectDevice()) await publishDevice();
+      gladys.requestWidgetRefresh(CHARGER_WIDGET);
+    } catch (err) {
+      logger.error('Post-connection initialization failed', err.message);
+    }
+  }),
+);
+
+gladys.onConfigUpdated(async (newConfig) =>
+  serializeModbus(async () => {
+    config = normalizeConfig(newConfig);
+    control.configure({
+      failsafeCurrent: config.failsafe_current,
+      failsafeTimeout: config.failsafe_timeout,
+    });
+    previousCharging = null;
     if (await connectDevice()) await publishDevice();
     gladys.requestWidgetRefresh(CHARGER_WIDGET);
-  } catch (err) {
-    logger.error('Post-connection initialization failed', err.message);
-  }
-});
-
-gladys.onConfigUpdated(async (newConfig) => {
-  config = normalizeConfig(newConfig);
-  control.configure({
-    failsafeCurrent: config.failsafe_current,
-    failsafeTimeout: config.failsafe_timeout,
-  });
-  previousCharging = null;
-  if (await connectDevice()) await publishDevice();
-  gladys.requestWidgetRefresh(CHARGER_WIDGET);
-});
+  }),
+);
 
 // --- Shutdown ----------------------------------------------------------------
 gladys.handleShutdown(async (signal) => {

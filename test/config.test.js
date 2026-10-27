@@ -3,12 +3,28 @@ import assert from 'node:assert/strict';
 import { normalizeConfig, DEFAULT_CONFIG } from '../src/config.js';
 import { alivePeriodMs, MIN_ALIVE_PERIOD_S, asRegister } from '../src/vestel/registers.js';
 import { AliveControl, ALIVE_VALUE } from '../src/alive.js';
+import { DEFAULT_FAILSAFE_CURRENT } from '../src/alive.js';
+
 import {
   buildReadRequest,
   buildWriteRequest,
   parseReadAnswer,
   parseWriteAnswer,
 } from '../src/vestel/modbus.js';
+
+test('the failsafe defaults keep the wallbox at the installer limit', () => {
+  assert.equal(DEFAULT_CONFIG.failsafe_current, 16);
+  assert.equal(DEFAULT_FAILSAFE_CURRENT, 16);
+  assert.equal(new AliveControl({ write: async () => {} }).failsafeCurrent(), 16);
+});
+
+test('an empty or too small failsafe value never reaches the wallbox as 0', () => {
+  assert.equal(normalizeConfig({ failsafe_timeout: '' }).failsafe_timeout, 20);
+  assert.equal(normalizeConfig({ failsafe_timeout: 0 }).failsafe_timeout, 20);
+  assert.equal(normalizeConfig({ failsafe_timeout: 3 }).failsafe_timeout, 6);
+  assert.equal(normalizeConfig({ failsafe_current: '' }).failsafe_current, 16);
+  assert.equal(normalizeConfig({ failsafe_current: '12' }).failsafe_current, 12);
+});
 
 test('normalizeConfig returns the defaults when called with no argument', () => {
   assert.deepEqual(normalizeConfig(), DEFAULT_CONFIG);
