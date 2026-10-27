@@ -26,7 +26,7 @@ import { FAILSAFE, alivePeriodMs } from './vestel/registers.js';
 export const ALIVE_VALUE = 1;
 
 /** The default failsafe current when the configuration says nothing usable. */
-export const DEFAULT_FAILSAFE_CURRENT = 6;
+export const DEFAULT_FAILSAFE_CURRENT = 16;
 
 /** The default failsafe timeout in seconds, as the specification gives it. */
 export const DEFAULT_FAILSAFE_TIMEOUT_S = 20;
