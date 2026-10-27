@@ -249,6 +249,18 @@ function stateColor(state) {
 }
 
 /**
+ * The highest measured phase current in amperes, or null when no phase carries
+ * current. The setpoint applies PER PHASE, so the sum of the phases is the wrong
+ * base for a tap: three phases at 16 A each sum to 48 A.
+ */
+function perPhaseAmps(state) {
+  const phases = ['current_l1', 'current_l2', 'current_l3']
+    .map((key) => Number(state?.[key]))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return phases.length ? Math.max(...phases) / 1000 : null;
+}
+
+/**
  * Work out what a tapped button means, without doing it.
  *
  * The widget returns an intention; the caller applies it, because the caller owns
@@ -281,9 +293,7 @@ export function chargerAction({
       const delta = actionKey === ACTION.CURRENT_UP ? step : -step;
       const base = hasControl(controlled)
         ? amps(controlled)
-        : state?.[TOTAL_CURRENT_READING] !== null && state?.[TOTAL_CURRENT_READING] !== undefined
-          ? amps(state[TOTAL_CURRENT_READING])
-          : amps(state?.[CURRENT_READING]);
+        : (perPhaseAmps(state) ?? amps(state?.[CURRENT_READING]));
       const min = Math.max(MIN_CURRENT, Number(limits?.min) || MIN_CURRENT);
       const ceiling = Number(limits?.max);
       const max = Number.isFinite(ceiling) ? Math.max(min, ceiling) : Infinity;
