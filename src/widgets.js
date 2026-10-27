@@ -181,8 +181,8 @@ export function buildChargerContent({
       ...(ids.cable_state
         ? [{ label: t('cable'), icon: 'plug', value: cableSentence(state) }]
         : []),
-      ...(Number.isFinite(Number(limits?.evseMax)) &&
-      Number.isFinite(Number(limits?.cableMax)) &&
+      ...(Number(limits?.evseMax) > 0 &&
+      Number(limits?.cableMax) > 0 &&
       Number(limits.cableMax) < Number(limits.evseMax)
         ? [{
             label: t('current_limit'),
