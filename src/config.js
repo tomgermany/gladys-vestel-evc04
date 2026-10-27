@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+failsafe_current// -----------------------------------------------------------------------------
 // Integration configuration.
 //
 // Filled in by the user in Gladys, from the `config_schema` of
@@ -32,13 +32,14 @@ export const DEFAULT_CONFIG = {
   // converted to milliseconds for the elapsed-time check in index.js.
   poll_interval_minutes: 5,
   poll_frequency: 5 * 60 * 1000,
-  // The current the wallbox falls back to when the heartbeat stops. The smallest
-  // value a car accepts is the safe choice: a released control should mean
-  // "charge slowly", not "charge uncontrolled".
+  // The current the wallbox falls back to when the heartbeat stops (register 2000).
+  // 16 A matches the installer limit of this installation (register 1104). It must
+  // never exceed that limit. The register is persistent on the wallbox: a low value
+  // here keeps the wallbox at that current after every restart of Gladys.
   failsafe_current: 16,
-  // Written to register 2002 only when a user/scene/widget explicitly changes
-  // the setpoint. If the heartbeat is then missed, the wallbox falls back to 6 A;
-  // the heartbeat period is half this timeout, at least 3 s.
+ // Written to register 2002 only when a user/scene/widget explicitly changes
+  // the setpoint. If the heartbeat is then missed, the wallbox falls back to the
+  // failsafe current; the heartbeat period is half this timeout, at least 3 s.
   failsafe_timeout: 20,
 };
 
