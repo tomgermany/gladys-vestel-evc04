@@ -223,12 +223,11 @@ export class Evc04Client extends VestelModbus {
     // the device answers 0 for the session and cable maximum when no session is
     // running or no cable is detected. Only a positive value may lower the ceiling.
     const valid = (v) => (Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_CURRENT);
-    const ceiling = Math.min(
-      valid(evseMax),
-      valid(cableMax),
-      valid(sessionMax),
-      DEFAULT_MAX_CURRENT,
-    );
+        // The session maximum (1100) is deliberately NOT part of the ceiling: it describes
+    // what the running session negotiated, can be small while a car draws little, and
+    // these limits are read only on connect, so it would pin the range until the next
+    // reconnect. It stays in the diagnostic below.
+    const ceiling = Math.min(valid(evseMax), valid(cableMax), DEFAULT_MAX_CURRENT);
     this.limits = {
       min: floor,
       max: Math.max(floor, ceiling),
