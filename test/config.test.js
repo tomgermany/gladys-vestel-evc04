@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { normalizeConfig, DEFAULT_CONFIG } from '../src/config.js';
 import { alivePeriodMs, MIN_ALIVE_PERIOD_S, asRegister } from '../src/vestel/registers.js';
 import { AliveControl, ALIVE_VALUE } from '../src/alive.js';
+import { DEFAULT_FAILSAFE_CURRENT } from '../src/alive.js';
+
 import {
   buildReadRequest,
   buildWriteRequest,
