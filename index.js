@@ -125,8 +125,23 @@ async function applySetpoint(connection, current) {
       ? config.failsafe_timeout
       : DEFAULT_FAILSAFE_TIMEOUT_S;
 
-  await connection.writeRegister(FAILSAFE.current, failsafeCurrent);
-  await connection.writeRegister(FAILSAFE.timeout, failsafeTimeout);
+  // The failsafe registers are persistent configuration of the wallbox, not part of
+  // a setpoint: read them first and write only when they differ. A register that
+  // cannot be read is written, so a refused read never leaves it unchecked.
+  const ensureRegister = async (register, wanted) => {
+    let actual = null;
+    try {
+      actual = await connection.readHoldingUint16(register);
+    } catch (err) {
+      logger.warn(`Register ${register} not readable (${err.message}), writing it`);
+    }
+    if (actual !== wanted) {
+      await connection.writeRegister(register, wanted);
+      logger.info(`Register ${register}: ${actual ?? 'unreadable'} -> ${wanted}`);
+    }
+  };
+  await ensureRegister(FAILSAFE.current, failsafeCurrent);
+  await ensureRegister(FAILSAFE.timeout, failsafeTimeout);
   await connection.writeRegister(CONTROL.charging_current, current);
   // A write echo confirms the request frame, not the value retained by the EVSE.
   // Read the writable holding register back (function 0x03) for an independent check.
