@@ -1,4 +1,3 @@
-failsafe_current// -----------------------------------------------------------------------------
 // Integration configuration.
 //
 // Filled in by the user in Gladys, from the `config_schema` of
