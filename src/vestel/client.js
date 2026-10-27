@@ -219,11 +219,10 @@ export class Evc04Client extends VestelModbus {
       this.readOptionalUint16(READ_ONLY.session_max_current).catch(() => null),
     ]);
     const floor = DEFAULT_MIN_CURRENT;
-    // Register 1100 reports the current session's limit, not the installer's
-    // configured EVSE ceiling. On the reference wallbox it reads 6 A even though
-    // the web interface allows 6-16 A. Using it here traps every widget increase
-    // at the minimum, so only the EVSE and cable ceilings constrain the setpoint.
-     const valid = (v) => (Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_CURRENT);
+    // A register that answers 0 (or nothing) is "not reported", not a limit of 0 A:
+    // the device answers 0 for the session and cable maximum when no session is
+    // running or no cable is detected. Only a positive value may lower the ceiling.
+    const valid = (v) => (Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_CURRENT);
     const ceiling = Math.min(
       valid(evseMax),
       valid(cableMax),
