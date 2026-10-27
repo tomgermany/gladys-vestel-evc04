@@ -223,9 +223,11 @@ export class Evc04Client extends VestelModbus {
     // configured EVSE ceiling. On the reference wallbox it reads 6 A even though
     // the web interface allows 6-16 A. Using it here traps every widget increase
     // at the minimum, so only the EVSE and cable ceilings constrain the setpoint.
+     const valid = (v) => (Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_CURRENT);
     const ceiling = Math.min(
-      evseMax ?? DEFAULT_MAX_CURRENT,
-      cableMax ?? DEFAULT_MAX_CURRENT,
+      valid(evseMax),
+      valid(cableMax),
+      valid(sessionMax),
       DEFAULT_MAX_CURRENT,
     );
     this.limits = {
