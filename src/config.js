@@ -16,6 +16,11 @@
 // to be caught before a release rather than after one.
 // -----------------------------------------------------------------------------
 
+const posInt = (v, fallback) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+};
+
 export const DEFAULT_CONFIG = {
   host: '',
   modbus_port: 502,
@@ -30,7 +35,7 @@ export const DEFAULT_CONFIG = {
   // The current the wallbox falls back to when the heartbeat stops. The smallest
   // value a car accepts is the safe choice: a released control should mean
   // "charge slowly", not "charge uncontrolled".
-  failsafe_current: 6,
+  failsafe_current: 16,
   // Written to register 2002 only when a user/scene/widget explicitly changes
   // the setpoint. If the heartbeat is then missed, the wallbox falls back to 6 A;
   // the heartbeat period is half this timeout, at least 3 s.
@@ -55,7 +60,7 @@ export function normalizeConfig(raw = {}) {
       ([1, 5, 15, 30, 60].includes(Number(raw.poll_interval_minutes))
         ? Number(raw.poll_interval_minutes)
         : DEFAULT_CONFIG.poll_interval_minutes) * 60 * 1000,
-    failsafe_current: Number(raw.failsafe_current ?? DEFAULT_CONFIG.failsafe_current),
-    failsafe_timeout: Number(raw.failsafe_timeout ?? DEFAULT_CONFIG.failsafe_timeout),
+    failsafe_current: posInt(raw.failsafe_current, DEFAULT_CONFIG.failsafe_current),
+    failsafe_timeout: Math.max(6, posInt(raw.failsafe_timeout, DEFAULT_CONFIG.failsafe_timeout)),
   };
 }
